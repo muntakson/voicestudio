@@ -27,3 +27,8 @@ class HealthResponse(BaseModel):
     status: str
     model_loaded: bool
     gpu_available: bool
+
+
+class RewriteRequest(BaseModel):
+    text: str = Field(..., description="Text to rewrite")
+    model: str = Field(default="claude-sonnet-4-6", description="LLM model ID")

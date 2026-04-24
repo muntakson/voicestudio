@@ -64,6 +64,13 @@ const EXAMPLES: { label: string; text: string; lang: string }[] = [
   },
 ];
 
+const LLM_MODELS = [
+  { id: "claude-sonnet-4-6", label: "Claude Sonnet 4.6", provider: "Anthropic" },
+  { id: "qwen/qwen3-32b", label: "Qwen 3 32B", provider: "Groq" },
+  { id: "llama-3.3-70b-versatile", label: "Llama 3.3 70B", provider: "Groq" },
+  { id: "llama-3.1-8b-instant", label: "Llama 3.1 8B", provider: "Groq" },
+];
+
 const SPEAKER_COLORS = [
   { bg: "bg-blue-500/15", border: "border-blue-500/30", label: "bg-blue-500/25 text-blue-300" },
   { bg: "bg-emerald-500/15", border: "border-emerald-500/30", label: "bg-emerald-500/25 text-emerald-300" },
@@ -71,6 +78,10 @@ const SPEAKER_COLORS = [
   { bg: "bg-pink-500/15", border: "border-pink-500/30", label: "bg-pink-500/25 text-pink-300" },
   { bg: "bg-cyan-500/15", border: "border-cyan-500/30", label: "bg-cyan-500/25 text-cyan-300" },
 ];
+
+function stripThinkTags(text: string): string {
+  return text.replace(/<think>[\s\S]*?<\/think>/g, "").trim();
+}
 
 function fmtTime(sec: number): string {
   const m = Math.floor(sec / 60);
@@ -83,7 +94,7 @@ function fmtTime(sec: number): string {
 /* ------------------------------------------------------------------ */
 
 export default function Home() {
-  const [activeTab, setActiveTab] = useState<"tts" | "asr">("tts");
+  const [activeTab, setActiveTab] = useState<"tts" | "asr" | "editor" | "settings">("tts");
 
   /* ---- TTS state ---- */
   const [text, setText] = useState("");
@@ -113,6 +124,16 @@ export default function Home() {
   const [copied, setCopied] = useState(false);
   const asrAbortRef = useRef<AbortController | null>(null);
   const asrFileRef = useRef<HTMLInputElement | null>(null);
+
+  /* ---- Editor state ---- */
+  const [editorText, setEditorText] = useState("");
+  const [rewrittenText, setRewrittenText] = useState("");
+  const [rewriteStatus, setRewriteStatus] = useState<{ status: string; message: string }>({ status: "idle", message: "" });
+  const rewriteAbortRef = useRef<AbortController | null>(null);
+  const editorFileRef = useRef<HTMLInputElement | null>(null);
+
+  /* ---- Settings state ---- */
+  const [selectedModel, setSelectedModel] = useState("claude-sonnet-4-6");
 
   /* ================================================================ */
   /*  TTS logic                                                        */
@@ -337,6 +358,172 @@ export default function Home() {
   };
 
   /* ================================================================ */
+  /*  Editor logic                                                     */
+  /* ================================================================ */
+
+  const loadTranscriptToEditor = useCallback(() => {
+    if (!transcript) return;
+    const lines = transcript.segments.map(
+      (seg) => `[화자 ${seg.speaker}] ${seg.text}`
+    );
+    setEditorText(lines.join("\n"));
+    setRewrittenText("");
+    setRewriteStatus({ status: "idle", message: "" });
+  }, [transcript]);
+
+  useEffect(() => {
+    if (activeTab === "editor" && transcript && !editorText) {
+      loadTranscriptToEditor();
+    }
+  }, [activeTab, transcript, editorText, loadTranscriptToEditor]);
+
+  const removeSpeaker = (speakerNum: number) => {
+    const lines = editorText.split("\n").filter(
+      (line) => !line.startsWith(`[화자 ${speakerNum}]`)
+    );
+    setEditorText(lines.join("\n"));
+  };
+
+  const speakersInText = (): number[] => {
+    const speakers = new Set<number>();
+    for (const line of editorText.split("\n")) {
+      const match = line.match(/^\[화자 (\d+)\]/);
+      if (match) speakers.add(parseInt(match[1], 10));
+    }
+    return Array.from(speakers).sort((a, b) => a - b);
+  };
+
+  const rewriteText = async () => {
+    if (!editorText.trim()) return;
+    rewriteAbortRef.current?.abort();
+    const controller = new AbortController();
+    rewriteAbortRef.current = controller;
+
+    setRewriteStatus({ status: "rewriting", message: "박완서 문체로 변환 중..." });
+    setRewrittenText("");
+
+    try {
+      const res = await fetch("/api/rewrite", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: editorText.trim(), model: selectedModel }),
+        signal: controller.signal,
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: "요청 실패" }));
+        setRewriteStatus({ status: "error", message: err.detail || "요청 실패" });
+        return;
+      }
+
+      const reader = res.body?.getReader();
+      if (!reader) {
+        setRewriteStatus({ status: "error", message: "No response stream" });
+        return;
+      }
+
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed || !trimmed.startsWith("data:")) continue;
+          try {
+            const event = JSON.parse(trimmed.slice(5).trim());
+            if (event.status === "complete") {
+              setRewrittenText(stripThinkTags(event.rewritten_text));
+              setRewriteStatus({ status: "complete", message: "변환 완료!" });
+            } else if (event.status === "error") {
+              setRewriteStatus({ status: "error", message: event.message || "실패" });
+            } else {
+              setRewriteStatus({ status: event.status, message: event.message || "" });
+            }
+          } catch { /* skip */ }
+        }
+      }
+    } catch (err: unknown) {
+      if ((err as Error).name === "AbortError") return;
+      setRewriteStatus({
+        status: "error",
+        message: err instanceof Error ? err.message : "알 수 없는 오류",
+      });
+    }
+  };
+
+  const fixTypos = async () => {
+    if (!editorText.trim()) return;
+    rewriteAbortRef.current?.abort();
+    const controller = new AbortController();
+    rewriteAbortRef.current = controller;
+
+    setRewriteStatus({ status: "rewriting", message: "오타 수정 중..." });
+    setRewrittenText("");
+
+    try {
+      const res = await fetch("/api/fix-typos", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: editorText.trim(), model: selectedModel }),
+        signal: controller.signal,
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: "요청 실패" }));
+        setRewriteStatus({ status: "error", message: err.detail || "요청 실패" });
+        return;
+      }
+
+      const reader = res.body?.getReader();
+      if (!reader) {
+        setRewriteStatus({ status: "error", message: "No response stream" });
+        return;
+      }
+
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed || !trimmed.startsWith("data:")) continue;
+          try {
+            const event = JSON.parse(trimmed.slice(5).trim());
+            if (event.status === "complete") {
+              setRewrittenText(stripThinkTags(event.fixed_text));
+              setRewriteStatus({ status: "complete", message: "오타 수정 완료!" });
+            } else if (event.status === "error") {
+              setRewriteStatus({ status: "error", message: event.message || "실패" });
+            } else {
+              setRewriteStatus({ status: event.status, message: event.message || "" });
+            }
+          } catch { /* skip */ }
+        }
+      }
+    } catch (err: unknown) {
+      if ((err as Error).name === "AbortError") return;
+      setRewriteStatus({
+        status: "error",
+        message: err instanceof Error ? err.message : "알 수 없는 오류",
+      });
+    }
+  };
+
+  const isRewriting = rewriteStatus.status === "rewriting";
+
+  /* ================================================================ */
   /*  Render                                                           */
   /* ================================================================ */
 
@@ -367,7 +554,23 @@ export default function Home() {
               activeTab === "asr" ? "bg-accent-600 text-white" : "text-[#a09bb5] hover:text-white"
             }`}
           >
-            음성 인식 (ASR)
+            음성인식
+          </button>
+          <button
+            onClick={() => setActiveTab("editor")}
+            className={`rounded-md px-6 py-2 text-sm font-medium transition-colors ${
+              activeTab === "editor" ? "bg-accent-600 text-white" : "text-[#a09bb5] hover:text-white"
+            }`}
+          >
+            글편집
+          </button>
+          <button
+            onClick={() => setActiveTab("settings")}
+            className={`rounded-md px-6 py-2 text-sm font-medium transition-colors ${
+              activeTab === "settings" ? "bg-accent-600 text-white" : "text-[#a09bb5] hover:text-white"
+            }`}
+          >
+            설정
           </button>
         </div>
       </header>
@@ -726,6 +929,247 @@ export default function Home() {
         </div>
       )}
 
+      {/* ============================================================ */}
+      {/*  Editor Tab                                                    */}
+      {/* ============================================================ */}
+
+      {activeTab === "editor" && (
+        <div className="grid gap-6 lg:grid-cols-[1fr_340px]">
+          <div className="space-y-6">
+            {/* Source text */}
+            <section className="card">
+              <div className="mb-3 flex items-center justify-between">
+                <h2 className="text-lg font-semibold">원본 텍스트</h2>
+                <div className="flex gap-2">
+                  <button
+                    className="btn-secondary text-xs"
+                    onClick={() => editorFileRef.current?.click()}
+                    title="텍스트 파일 불러오기"
+                  >
+                    <FileIcon /> 파일 열기
+                  </button>
+                  <button
+                    className="btn-secondary text-xs"
+                    onClick={loadTranscriptToEditor}
+                    disabled={!transcript}
+                  >
+                    <RefreshIcon /> 음성인식 결과
+                  </button>
+                </div>
+                <input
+                  ref={editorFileRef}
+                  type="file"
+                  accept=".txt,.srt,.vtt,.csv,.tsv,.md,.json"
+                  className="hidden"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) {
+                      const reader = new FileReader();
+                      reader.onload = (ev) => {
+                        const content = ev.target?.result;
+                        if (typeof content === "string") {
+                          setEditorText(content);
+                          setRewrittenText("");
+                          setRewriteStatus({ status: "idle", message: "" });
+                        }
+                      };
+                      reader.readAsText(f);
+                    }
+                    e.target.value = "";
+                  }}
+                />
+              </div>
+              <textarea
+                className="input-field min-h-[250px] resize-y text-sm leading-relaxed"
+                value={editorText}
+                onChange={(e) => setEditorText(e.target.value)}
+                placeholder="텍스트를 붙여넣거나, 파일을 열거나, 음성인식 결과를 불러오세요..."
+              />
+            </section>
+
+            {/* Actions */}
+            {editorText && (
+              <section className="card">
+                <h2 className="mb-4 text-lg font-semibold">편집 도구</h2>
+
+                {/* Speaker removal */}
+                {speakersInText().length > 0 && (
+                  <div className="mb-4">
+                    <label className="label">화자 삭제</label>
+                    <div className="flex flex-wrap gap-2">
+                      {speakersInText().map((spk) => {
+                        const color = SPEAKER_COLORS[(spk - 1) % SPEAKER_COLORS.length];
+                        return (
+                          <button
+                            key={spk}
+                            className={`rounded-lg border ${color.border} ${color.bg} px-3 py-1.5 text-sm font-medium transition-colors hover:opacity-80`}
+                            onClick={() => removeSpeaker(spk)}
+                          >
+                            <TrashIcon /> 화자 {spk} 삭제
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Typo fix + Rewrite */}
+                <div className="flex gap-3">
+                  <button
+                    className="btn-secondary flex-1 text-base py-2.5"
+                    disabled={!editorText.trim() || isRewriting}
+                    onClick={fixTypos}
+                  >
+                    {isRewriting && rewriteStatus.message.includes("오타") ? <><Spinner /> 수정 중...</> : <><SpellCheckIcon /> 오타수정</>}
+                  </button>
+                  <button
+                    className="btn-primary flex-1 text-base py-2.5"
+                    disabled={!editorText.trim() || isRewriting}
+                    onClick={rewriteText}
+                  >
+                    {isRewriting && !rewriteStatus.message.includes("오타") ? <><Spinner /> 변환 중...</> : <><PenIcon /> 박완서 문체</>}
+                  </button>
+                </div>
+                <p className="mt-2 text-xs text-[#6b6580]">
+                  모델: {LLM_MODELS.find((m) => m.id === selectedModel)?.label ?? selectedModel}
+                  {" · "}설정 탭에서 변경 가능
+                </p>
+              </section>
+            )}
+
+            {/* Rewrite progress */}
+            {rewriteStatus.status === "rewriting" && (
+              <section className="card">
+                <div className="space-y-3">
+                  <div className="flex items-center gap-3">
+                    <Spinner />
+                    <span className="text-sm text-[#a09bb5]">{rewriteStatus.message}</span>
+                  </div>
+                  <div className="h-2 overflow-hidden rounded-full bg-[#241f33]">
+                    <div className="progress-pulse h-full rounded-full bg-gradient-to-r from-accent-600 to-purple-500" style={{ width: "60%", transition: "width 0.5s ease" }} />
+                  </div>
+                </div>
+              </section>
+            )}
+
+            {/* Rewrite error */}
+            {rewriteStatus.status === "error" && (
+              <section className="card">
+                <div className="rounded-lg border border-red-800/50 bg-red-900/20 px-4 py-3 text-sm text-red-300">
+                  {rewriteStatus.message}
+                </div>
+              </section>
+            )}
+
+            {/* Rewritten result */}
+            {rewrittenText && rewriteStatus.status === "complete" && (
+              <section className="card">
+                <div className="mb-3 flex items-center justify-between">
+                  <h2 className="text-lg font-semibold">변환 결과</h2>
+                  <div className="flex gap-2">
+                    <button
+                      className="btn-secondary text-xs"
+                      onClick={async () => {
+                        await navigator.clipboard.writeText(rewrittenText);
+                      }}
+                    >
+                      <CopyIcon /> 복사
+                    </button>
+                    <button
+                      className="btn-secondary text-xs"
+                      onClick={() => {
+                        const blob = new Blob([rewrittenText], { type: "text/plain;charset=utf-8" });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement("a");
+                        a.href = url;
+                        a.download = "rewritten.txt";
+                        a.click();
+                        URL.revokeObjectURL(url);
+                      }}
+                    >
+                      <DownloadIcon /> 다운로드
+                    </button>
+                  </div>
+                </div>
+                <div className="whitespace-pre-wrap rounded-lg border border-purple-500/30 bg-purple-500/10 px-4 py-3 text-sm leading-relaxed text-[#e8e4f0]">
+                  {rewrittenText}
+                </div>
+              </section>
+            )}
+          </div>
+
+          {/* Right sidebar */}
+          <aside className="space-y-6">
+            <section className="card">
+              <h2 className="mb-3 text-lg font-semibold">사용 방법</h2>
+              <ul className="space-y-2 text-sm text-[#a09bb5]">
+                <li className="flex gap-2">
+                  <span className="text-accent-400">1.</span>
+                  음성인식 탭에서 인식을 완료한 후 이 탭으로 이동하세요.
+                </li>
+                <li className="flex gap-2">
+                  <span className="text-accent-400">2.</span>
+                  화자 삭제 버튼으로 특정 화자의 발화를 제거할 수 있습니다.
+                </li>
+                <li className="flex gap-2">
+                  <span className="text-accent-400">3.</span>
+                  &ldquo;박완서 문체&rdquo; 버튼을 클릭하면 AI가 문체를 변환합니다.
+                </li>
+                <li className="flex gap-2">
+                  <span className="text-accent-400">4.</span>
+                  설정 탭에서 사용할 LLM 모델을 변경할 수 있습니다.
+                </li>
+              </ul>
+            </section>
+
+            <section className="card">
+              <h2 className="mb-3 text-lg font-semibold">박완서 문체란?</h2>
+              <p className="text-sm text-[#a09bb5] leading-relaxed">
+                박완서(1931–2011)는 한국 문학의 거장으로, 일상의 세밀한 관찰, 솔직하고 담담한 어조, 깊은 감정 묘사, 사회 비판적 시선이 특징입니다.
+              </p>
+            </section>
+          </aside>
+        </div>
+      )}
+
+      {/* ============================================================ */}
+      {/*  Settings Tab                                                  */}
+      {/* ============================================================ */}
+
+      {activeTab === "settings" && (
+        <div className="mx-auto max-w-2xl space-y-6">
+          <section className="card">
+            <h2 className="mb-4 text-lg font-semibold">LLM 모델 설정</h2>
+            <p className="mb-4 text-sm text-[#a09bb5]">
+              글편집 탭의 오타수정 및 문체 변환에 사용할 LLM 모델을 선택하세요.
+            </p>
+            <div className="space-y-2">
+              {LLM_MODELS.map((m) => (
+                <button
+                  key={m.id}
+                  onClick={() => setSelectedModel(m.id)}
+                  className={`w-full rounded-lg px-4 py-3 text-left text-sm transition-colors ${
+                    selectedModel === m.id
+                      ? "bg-accent-600/30 border border-accent-500/50 text-white"
+                      : "bg-[#1e1a2e] border border-transparent hover:bg-[#2a2540] text-[#c0bcd0]"
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <span className="font-medium">{m.label}</span>
+                      <span className="ml-2 rounded px-1.5 py-0.5 text-[10px] bg-[#2e2845] text-[#a09bb5]">{m.provider}</span>
+                    </div>
+                    {selectedModel === m.id && (
+                      <span className="text-xs text-accent-400">선택됨</span>
+                    )}
+                  </div>
+                </button>
+              ))}
+            </div>
+          </section>
+        </div>
+      )}
+
       <footer className="mt-12 border-t border-[#2e2845] pt-6 text-center text-xs text-[#6b6580]">
         Voice Studio &mdash; Powered by Qwen3-TTS &amp; Whisper
       </footer>
@@ -838,6 +1282,50 @@ function CopyIcon() {
     <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
       <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
       <path strokeLinecap="round" strokeLinejoin="round" d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+    </svg>
+  );
+}
+
+function TrashIcon() {
+  return (
+    <svg className="inline h-3.5 w-3.5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+    </svg>
+  );
+}
+
+function PenIcon() {
+  return (
+    <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+    </svg>
+  );
+}
+
+function FileIcon() {
+  return (
+    <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
+      <polyline points="14 2 14 8 20 8" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" />
+      <line x1="16" y1="13" x2="8" y2="13" stroke="currentColor" strokeLinecap="round" />
+      <line x1="16" y1="17" x2="8" y2="17" stroke="currentColor" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function SpellCheckIcon() {
+  return (
+    <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="M4 7h16M4 12h8M4 17h6" />
+    </svg>
+  );
+}
+
+function RefreshIcon() {
+  return (
+    <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
     </svg>
   );
 }
