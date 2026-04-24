@@ -11,6 +11,20 @@ frontend/.next/
 backend/uploads/
 backend/outputs/
 backend/logs/
+backend/artifacts/
+backend/audio_files/
+backend/projects.db*
+
+# Build artifacts
+frontend/tsconfig.tsbuildinfo
+
+# Audio files in root
+*.m4a
+*.wav
+*.mp3
+
+# Stray pip artifacts
+backend/=*
 
 # OS
 .DS_Store

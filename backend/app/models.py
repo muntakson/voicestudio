@@ -32,3 +32,18 @@ class HealthResponse(BaseModel):
 class RewriteRequest(BaseModel):
     text: str = Field(..., description="Text to rewrite")
     model: str = Field(default="claude-sonnet-4-6", description="LLM model ID")
+
+
+class ProjectCreate(BaseModel):
+    name: str = Field(..., description="Project name")
+
+
+class ProjectUpdate(BaseModel):
+    name: Optional[str] = None
+    transcript_text: Optional[str] = None
+    num_speakers: Optional[int] = None
+    llm_model: Optional[str] = None
+    rewritten_text: Optional[str] = None
+    generated_audio_filename: Optional[str] = None
+    generated_audio_size: Optional[int] = None
+    status: Optional[str] = None

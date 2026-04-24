@@ -9,6 +9,7 @@ import subprocess
 import tempfile
 import uuid
 from contextlib import asynccontextmanager
+from datetime import datetime
 from typing import AsyncGenerator
 
 import fastapi
@@ -18,7 +19,14 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.asr_service import asr_service
-from app.models import GenerateRequest, HealthResponse, RewriteRequest, VoiceInfo, VoiceListResponse
+from app.database import (
+    init_db, list_projects, get_project, create_project,
+    update_project, delete_project, AUDIO_FILES_DIR, ARTIFACTS_DIR,
+)
+from app.models import (
+    GenerateRequest, HealthResponse, ProjectCreate, ProjectUpdate,
+    RewriteRequest, VoiceInfo, VoiceListResponse,
+)
 from app.tts_service import tts_service, OUTPUTS_DIR, UPLOADS_DIR, ALLOWED_AUDIO_EXTENSIONS
 
 logger = logging.getLogger(__name__)
@@ -28,13 +36,15 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(na
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting Qwen3-TTS backend ...")
+    init_db()
+    logger.info("Database initialized.")
     tts_service.load_model()
     logger.info("Model ready. Accepting requests.")
     yield
     logger.info("Shutting down Qwen3-TTS backend.")
 
 
-app = FastAPI(title="Qwen3-TTS API", version="2.0.0", lifespan=lifespan)
+app = FastAPI(title="Qwen3-TTS API", version="3.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -50,7 +60,7 @@ app.mount("/uploads", StaticFiles(directory=UPLOADS_DIR), name="uploads")
 
 
 # ---------------------------------------------------------------------------
-# Routes
+# Health & Voice Routes
 # ---------------------------------------------------------------------------
 
 @app.get("/api/health", response_model=HealthResponse)
@@ -64,7 +74,7 @@ async def health_check():
 
 
 @app.get("/api/voices", response_model=VoiceListResponse)
-async def list_voices():
+async def api_list_voices():
     raw = tts_service.list_voices()
     return VoiceListResponse(voices=[VoiceInfo(**v) for v in raw])
 
@@ -76,83 +86,59 @@ async def upload_voice(
     ref_text: str = fastapi.Form(""),
     language: str = fastapi.Form("Auto"),
 ):
-    """Upload a voice sample and register it with a speaker name."""
     if not file.filename:
         raise HTTPException(status_code=400, detail="No filename provided")
-
     ext = os.path.splitext(file.filename.lower())[1]
     if ext not in ALLOWED_AUDIO_EXTENSIONS:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unsupported format. Accepted: {', '.join(sorted(ALLOWED_AUDIO_EXTENSIONS))}",
-        )
-
+        raise HTTPException(status_code=400, detail=f"Unsupported format. Accepted: {', '.join(sorted(ALLOWED_AUDIO_EXTENSIONS))}")
     contents = await file.read()
     if len(contents) == 0:
         raise HTTPException(status_code=400, detail="Empty file")
     if len(contents) > 50 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="File too large (max 50 MB)")
-
     result = tts_service.save_uploaded_voice(
-        contents=contents,
-        original_filename=file.filename,
-        speaker_name=name.strip(),
-        ref_text=ref_text.strip(),
-        language=language.strip(),
+        contents=contents, original_filename=file.filename,
+        speaker_name=name.strip(), ref_text=ref_text.strip(), language=language.strip(),
     )
-
     logger.info("Registered voice '%s' from %s", result["name"], file.filename)
     return result
 
 
+# ---------------------------------------------------------------------------
+# TTS Generation
+# ---------------------------------------------------------------------------
+
 @app.post("/api/generate")
 async def generate_audio(req: GenerateRequest):
-    """Generate TTS audio via Server-Sent Events."""
-
     async def event_stream() -> AsyncGenerator[str, None]:
         try:
             if not tts_service.is_loaded:
                 yield _sse({"status": "error", "message": "Model is not loaded yet"})
                 return
-
             yield _sse({"status": "loading", "message": "Preparing voice clone..."})
-
             try:
                 tts_service.resolve_voice(req.voice_id)
             except FileNotFoundError as exc:
                 yield _sse({"status": "error", "message": str(exc)})
                 return
-
             yield _sse({"status": "generating", "message": "Generating audio..."})
-
-            import asyncio
             loop = asyncio.get_event_loop()
             result = await loop.run_in_executor(
                 None,
-                lambda: tts_service.generate(
-                    text=req.text,
-                    voice_id=req.voice_id,
-                    language=req.language,
-                    seed=req.seed,
-                ),
+                lambda: tts_service.generate(text=req.text, voice_id=req.voice_id, language=req.language, seed=req.seed),
             )
-
             yield _sse({
                 "status": "complete",
                 "audio_url": f"/api/outputs/{result['output_filename']}",
                 "duration": result["duration"],
                 "generation_time": result["generation_time"],
             })
-
         except Exception as exc:
             logger.error("Generation failed: %s", exc, exc_info=True)
             yield _sse({"status": "error", "message": str(exc)})
 
-    return StreamingResponse(
-        event_stream(),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
-    )
+    return StreamingResponse(event_stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"})
 
 
 @app.get("/api/outputs/{filename}")
@@ -166,7 +152,7 @@ async def get_output(filename: str):
 
 
 # ---------------------------------------------------------------------------
-# ASR (Speech-to-Text)
+# ASR (standalone, backwards-compat)
 # ---------------------------------------------------------------------------
 
 @app.post("/api/transcribe")
@@ -174,36 +160,25 @@ async def transcribe_audio(
     file: UploadFile = File(...),
     num_speakers: int = fastapi.Form(2),
 ):
-    """Transcribe Korean audio with speaker diarization via SSE."""
     if not file.filename:
         raise HTTPException(status_code=400, detail="No filename provided")
-
     ext = os.path.splitext(file.filename.lower())[1]
     if ext not in ALLOWED_AUDIO_EXTENSIONS:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unsupported format. Accepted: {', '.join(sorted(ALLOWED_AUDIO_EXTENSIONS))}",
-        )
-
+        raise HTTPException(status_code=400, detail=f"Unsupported format. Accepted: {', '.join(sorted(ALLOWED_AUDIO_EXTENSIONS))}")
     contents = await file.read()
     if len(contents) == 0:
         raise HTTPException(status_code=400, detail="Empty file")
     if len(contents) > 100 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="File too large (max 100 MB)")
-
     num_speakers = max(1, min(num_speakers, 5))
 
     tmp_dir = tempfile.mkdtemp()
     src_path = os.path.join(tmp_dir, f"input{ext}")
     wav_path = os.path.join(tmp_dir, "input.wav")
-
     with open(src_path, "wb") as f:
         f.write(contents)
-
-    conv = subprocess.run(
-        ["ffmpeg", "-y", "-i", src_path, "-ar", "16000", "-ac", "1", "-f", "wav", wav_path],
-        capture_output=True, timeout=120,
-    )
+    conv = subprocess.run(["ffmpeg", "-y", "-i", src_path, "-ar", "16000", "-ac", "1", "-f", "wav", wav_path],
+                          capture_output=True, timeout=120)
     if conv.returncode != 0:
         shutil.rmtree(tmp_dir, ignore_errors=True)
         raise HTTPException(status_code=400, detail="Failed to process audio file")
@@ -214,29 +189,198 @@ async def transcribe_audio(
                 yield _sse({"status": "loading", "message": "ASR 모델을 로딩 중입니다 (최초 1회, 잠시 기다려 주세요)..."})
                 loop = asyncio.get_event_loop()
                 await loop.run_in_executor(None, asr_service.load_models)
-
             yield _sse({"status": "transcribing", "message": "음성을 인식하고 화자를 구분하는 중..."})
-
             loop = asyncio.get_event_loop()
             result = await loop.run_in_executor(
-                None,
-                lambda: asr_service.transcribe(src_path, wav_path, num_speakers=num_speakers),
-            )
-
+                None, lambda: asr_service.transcribe(src_path, wav_path, num_speakers=num_speakers))
             yield _sse({"status": "complete", **result})
-
         except Exception as exc:
             logger.error("Transcription failed: %s", exc, exc_info=True)
             yield _sse({"status": "error", "message": str(exc)})
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
 
-    return StreamingResponse(
-        event_stream(),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
-    )
+    return StreamingResponse(event_stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"})
 
+
+# ---------------------------------------------------------------------------
+# Project CRUD
+# ---------------------------------------------------------------------------
+
+@app.get("/api/projects")
+async def api_list_projects():
+    return list_projects()
+
+
+@app.post("/api/projects")
+async def api_create_project(req: ProjectCreate):
+    pid = str(uuid.uuid4())
+    now = datetime.now().isoformat()
+    proj = create_project(pid, req.name.strip(), now)
+    logger.info("Created project '%s' (%s)", req.name, pid)
+    return proj
+
+
+@app.get("/api/projects/{project_id}")
+async def api_get_project(project_id: str):
+    proj = get_project(project_id)
+    if not proj:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return proj
+
+
+@app.patch("/api/projects/{project_id}")
+async def api_update_project(project_id: str, req: ProjectUpdate):
+    proj = get_project(project_id)
+    if not proj:
+        raise HTTPException(status_code=404, detail="Project not found")
+    fields = {k: v for k, v in req.model_dump().items() if v is not None}
+    updated = update_project(project_id, **fields)
+    return updated
+
+
+@app.delete("/api/projects/{project_id}")
+async def api_delete_project(project_id: str):
+    proj = get_project(project_id)
+    if not proj:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if proj.get("source_audio_filename"):
+        audio_path = os.path.join(AUDIO_FILES_DIR, proj["source_audio_filename"])
+        if os.path.isfile(audio_path):
+            os.remove(audio_path)
+    artifact_path = os.path.join(ARTIFACTS_DIR, f"{project_id}_transcript.txt")
+    if os.path.isfile(artifact_path):
+        os.remove(artifact_path)
+    delete_project(project_id)
+    logger.info("Deleted project %s", project_id)
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Audio Files (for ASR file picker)
+# ---------------------------------------------------------------------------
+
+@app.get("/api/audio-files")
+async def api_list_audio_files():
+    files = []
+    for f in sorted(os.listdir(AUDIO_FILES_DIR)):
+        path = os.path.join(AUDIO_FILES_DIR, f)
+        if not os.path.isfile(path):
+            continue
+        ext = os.path.splitext(f.lower())[1]
+        if ext in ALLOWED_AUDIO_EXTENSIONS:
+            stat = os.stat(path)
+            files.append({
+                "filename": f,
+                "size": stat.st_size,
+                "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+            })
+    return files
+
+
+@app.get("/api/audio-files/{filename}")
+async def api_get_audio_file(filename: str):
+    if "/" in filename or "\\" in filename or ".." in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    path = os.path.join(AUDIO_FILES_DIR, filename)
+    if not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail="File not found")
+    return FileResponse(path, filename=filename)
+
+
+# ---------------------------------------------------------------------------
+# Project-aware Transcription
+# ---------------------------------------------------------------------------
+
+@app.post("/api/projects/{project_id}/transcribe")
+async def api_project_transcribe(
+    project_id: str,
+    file: UploadFile = File(None),
+    existing_file: str = fastapi.Form(""),
+    num_speakers: int = fastapi.Form(2),
+):
+    proj = get_project(project_id)
+    if not proj:
+        raise HTTPException(status_code=404, detail="Project not found")
+    num_speakers = max(1, min(num_speakers, 5))
+
+    if file and file.filename:
+        ext = os.path.splitext(file.filename.lower())[1]
+        if ext not in ALLOWED_AUDIO_EXTENSIONS:
+            raise HTTPException(status_code=400, detail="Unsupported audio format")
+        contents = await file.read()
+        if len(contents) == 0:
+            raise HTTPException(status_code=400, detail="Empty file")
+        if len(contents) > 100 * 1024 * 1024:
+            raise HTTPException(status_code=400, detail="File too large (max 100 MB)")
+        safe_name = f"{uuid.uuid4().hex[:8]}_{file.filename}"
+        save_path = os.path.join(AUDIO_FILES_DIR, safe_name)
+        with open(save_path, "wb") as fout:
+            fout.write(contents)
+        update_project(project_id,
+                       source_audio_filename=safe_name,
+                       source_audio_original_name=file.filename,
+                       source_audio_size=len(contents),
+                       num_speakers=num_speakers)
+        src_path = save_path
+    elif existing_file:
+        if "/" in existing_file or "\\" in existing_file or ".." in existing_file:
+            raise HTTPException(status_code=400, detail="Invalid filename")
+        src_path = os.path.join(AUDIO_FILES_DIR, existing_file)
+        if not os.path.isfile(src_path):
+            raise HTTPException(status_code=404, detail="Audio file not found")
+        fsize = os.path.getsize(src_path)
+        update_project(project_id,
+                       source_audio_filename=existing_file,
+                       source_audio_original_name=existing_file,
+                       source_audio_size=fsize,
+                       num_speakers=num_speakers)
+    else:
+        raise HTTPException(status_code=400, detail="No audio file provided")
+
+    tmp_dir = tempfile.mkdtemp()
+    wav_path = os.path.join(tmp_dir, "input.wav")
+    conv = subprocess.run(["ffmpeg", "-y", "-i", src_path, "-ar", "16000", "-ac", "1", "-f", "wav", wav_path],
+                          capture_output=True, timeout=120)
+    if conv.returncode != 0:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        raise HTTPException(status_code=400, detail="Failed to process audio file")
+
+    async def event_stream() -> AsyncGenerator[str, None]:
+        try:
+            if not asr_service.is_loaded:
+                yield _sse({"status": "loading", "message": "ASR 모델을 로딩 중입니다 (최초 1회, 잠시 기다려 주세요)..."})
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(None, asr_service.load_models)
+            yield _sse({"status": "transcribing", "message": "음성을 인식하고 화자를 구분하는 중..."})
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(
+                None, lambda: asr_service.transcribe(src_path, wav_path, num_speakers=num_speakers))
+
+            update_project(project_id,
+                           transcript_json=json.dumps(result, ensure_ascii=False),
+                           transcript_text=result.get("full_text", ""),
+                           status="transcribed")
+
+            artifact_path = os.path.join(ARTIFACTS_DIR, f"{project_id}_transcript.txt")
+            with open(artifact_path, "w", encoding="utf-8") as af:
+                af.write(result.get("full_text", ""))
+
+            yield _sse({"status": "complete", **result})
+        except Exception as exc:
+            logger.error("Project transcription failed: %s", exc, exc_info=True)
+            yield _sse({"status": "error", "message": str(exc)})
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"})
+
+
+# ---------------------------------------------------------------------------
+# LLM Rewrite / Fix Typos
+# ---------------------------------------------------------------------------
 
 GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions"
 ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
@@ -261,27 +405,16 @@ FIX_TYPOS_SYSTEM_PROMPT = (
 
 def _call_llm(model: str, system_prompt: str, user_text: str, temperature: float = 0.7) -> str:
     import requests as _requests
-
     if model.startswith("claude"):
         api_key = os.environ.get("ANTHROPIC_API_KEY", "")
         if not api_key:
             raise RuntimeError("ANTHROPIC_API_KEY is not set")
-        resp = _requests.post(
-            ANTHROPIC_API_URL,
-            headers={
-                "x-api-key": api_key,
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json",
-            },
-            json={
-                "model": model,
-                "max_tokens": 4096,
-                "temperature": temperature,
-                "system": system_prompt,
-                "messages": [{"role": "user", "content": user_text}],
-            },
-            timeout=120,
-        )
+        resp = _requests.post(ANTHROPIC_API_URL, headers={
+            "x-api-key": api_key, "anthropic-version": "2023-06-01", "content-type": "application/json",
+        }, json={
+            "model": model, "max_tokens": 4096, "temperature": temperature,
+            "system": system_prompt, "messages": [{"role": "user", "content": user_text}],
+        }, timeout=120)
         if resp.status_code != 200:
             raise RuntimeError(f"Claude API error ({resp.status_code}): {resp.text[:300]}")
         return resp.json()["content"][0]["text"]
@@ -289,23 +422,13 @@ def _call_llm(model: str, system_prompt: str, user_text: str, temperature: float
         api_key = os.environ.get("GROQ_API_KEY", "")
         if not api_key:
             raise RuntimeError("GROQ_API_KEY is not set")
-        resp = _requests.post(
-            GROQ_CHAT_URL,
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": model,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_text},
-                ],
-                "temperature": temperature,
-                "max_tokens": 4096,
-            },
-            timeout=120,
-        )
+        resp = _requests.post(GROQ_CHAT_URL, headers={
+            "Authorization": f"Bearer {api_key}", "Content-Type": "application/json",
+        }, json={
+            "model": model,
+            "messages": [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_text}],
+            "temperature": temperature, "max_tokens": 4096,
+        }, timeout=120)
         if resp.status_code != 200:
             raise RuntimeError(f"Groq API error ({resp.status_code}): {resp.text[:300]}")
         return resp.json()["choices"][0]["message"]["content"]
@@ -313,46 +436,32 @@ def _call_llm(model: str, system_prompt: str, user_text: str, temperature: float
 
 @app.post("/api/fix-typos")
 async def fix_typos(req: RewriteRequest):
-    """Fix typos and spelling errors via LLM."""
     async def event_stream() -> AsyncGenerator[str, None]:
         try:
             yield _sse({"status": "fixing", "message": "오타 수정 중..."})
             loop = asyncio.get_event_loop()
-            fixed = await loop.run_in_executor(
-                None, lambda: _call_llm(req.model, FIX_TYPOS_SYSTEM_PROMPT, req.text, 0.2),
-            )
+            fixed = await loop.run_in_executor(None, lambda: _call_llm(req.model, FIX_TYPOS_SYSTEM_PROMPT, req.text, 0.2))
             yield _sse({"status": "complete", "fixed_text": fixed})
         except Exception as exc:
             logger.error("Fix typos failed: %s", exc, exc_info=True)
             yield _sse({"status": "error", "message": str(exc)})
-
-    return StreamingResponse(
-        event_stream(),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
-    )
+    return StreamingResponse(event_stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"})
 
 
 @app.post("/api/rewrite")
 async def rewrite_text(req: RewriteRequest):
-    """Rewrite text in Park Wan-seo's literary style via LLM."""
     async def event_stream() -> AsyncGenerator[str, None]:
         try:
             yield _sse({"status": "rewriting", "message": "박완서 문체로 변환 중..."})
             loop = asyncio.get_event_loop()
-            rewritten = await loop.run_in_executor(
-                None, lambda: _call_llm(req.model, REWRITE_SYSTEM_PROMPT, req.text, 0.7),
-            )
+            rewritten = await loop.run_in_executor(None, lambda: _call_llm(req.model, REWRITE_SYSTEM_PROMPT, req.text, 0.7))
             yield _sse({"status": "complete", "rewritten_text": rewritten})
         except Exception as exc:
             logger.error("Rewrite failed: %s", exc, exc_info=True)
             yield _sse({"status": "error", "message": str(exc)})
-
-    return StreamingResponse(
-        event_stream(),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
-    )
+    return StreamingResponse(event_stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"})
 
 
 def _sse(data: dict) -> str:
