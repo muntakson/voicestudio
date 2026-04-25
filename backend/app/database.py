@@ -39,13 +39,68 @@ def init_db():
             transcript_text TEXT,
             num_speakers INTEGER DEFAULT 2,
             llm_model TEXT,
+            edited_transcript TEXT,
             rewritten_text TEXT,
             generated_audio_filename TEXT,
             generated_audio_size INTEGER DEFAULT 0,
-            status TEXT DEFAULT 'created'
+            generated_audio_duration REAL DEFAULT 0,
+            status TEXT DEFAULT 'created',
+            asr_model TEXT,
+            asr_elapsed REAL DEFAULT 0,
+            asr_audio_duration REAL DEFAULT 0,
+            asr_cost REAL DEFAULT 0,
+            fix_typos_model TEXT,
+            fix_typos_input_tokens INTEGER DEFAULT 0,
+            fix_typos_output_tokens INTEGER DEFAULT 0,
+            fix_typos_elapsed REAL DEFAULT 0,
+            fix_typos_cost REAL DEFAULT 0,
+            rewrite_model TEXT,
+            rewrite_input_tokens INTEGER DEFAULT 0,
+            rewrite_output_tokens INTEGER DEFAULT 0,
+            rewrite_elapsed REAL DEFAULT 0,
+            rewrite_cost REAL DEFAULT 0,
+            tts_engine TEXT,
+            tts_model TEXT,
+            tts_text_chars INTEGER DEFAULT 0,
+            tts_elapsed REAL DEFAULT 0,
+            tts_cost REAL DEFAULT 0,
+            total_cost REAL DEFAULT 0
         )
     """)
+    _migrate(db)
     db.commit()
+
+
+def _migrate(db: sqlite3.Connection):
+    cursor = db.execute("PRAGMA table_info(projects)")
+    existing = {row[1] for row in cursor.fetchall()}
+    new_cols = [
+        ("edited_transcript", "TEXT"),
+        ("asr_model", "TEXT"),
+        ("asr_elapsed", "REAL DEFAULT 0"),
+        ("asr_audio_duration", "REAL DEFAULT 0"),
+        ("asr_cost", "REAL DEFAULT 0"),
+        ("fix_typos_model", "TEXT"),
+        ("fix_typos_input_tokens", "INTEGER DEFAULT 0"),
+        ("fix_typos_output_tokens", "INTEGER DEFAULT 0"),
+        ("fix_typos_elapsed", "REAL DEFAULT 0"),
+        ("fix_typos_cost", "REAL DEFAULT 0"),
+        ("rewrite_model", "TEXT"),
+        ("rewrite_input_tokens", "INTEGER DEFAULT 0"),
+        ("rewrite_output_tokens", "INTEGER DEFAULT 0"),
+        ("rewrite_elapsed", "REAL DEFAULT 0"),
+        ("rewrite_cost", "REAL DEFAULT 0"),
+        ("generated_audio_duration", "REAL DEFAULT 0"),
+        ("tts_engine", "TEXT"),
+        ("tts_model", "TEXT"),
+        ("tts_text_chars", "INTEGER DEFAULT 0"),
+        ("tts_elapsed", "REAL DEFAULT 0"),
+        ("tts_cost", "REAL DEFAULT 0"),
+        ("total_cost", "REAL DEFAULT 0"),
+    ]
+    for col_name, col_def in new_cols:
+        if col_name not in existing:
+            db.execute(f"ALTER TABLE projects ADD COLUMN {col_name} {col_def}")
 
 
 def list_projects() -> list[dict]:
@@ -73,8 +128,14 @@ def create_project(project_id: str, name: str, created_at: str) -> dict:
 _ALLOWED_FIELDS = {
     "name", "source_audio_filename", "source_audio_original_name",
     "source_audio_size", "transcript_json", "transcript_text",
-    "num_speakers", "llm_model", "rewritten_text",
-    "generated_audio_filename", "generated_audio_size", "status",
+    "num_speakers", "llm_model", "edited_transcript", "rewritten_text",
+    "generated_audio_filename", "generated_audio_size", "generated_audio_duration",
+    "status",
+    "asr_model", "asr_elapsed", "asr_audio_duration", "asr_cost",
+    "fix_typos_model", "fix_typos_input_tokens", "fix_typos_output_tokens", "fix_typos_elapsed", "fix_typos_cost",
+    "rewrite_model", "rewrite_input_tokens", "rewrite_output_tokens", "rewrite_elapsed", "rewrite_cost",
+    "tts_engine", "tts_model", "tts_text_chars", "tts_elapsed", "tts_cost",
+    "total_cost",
 }
 
 

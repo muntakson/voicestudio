@@ -7,6 +7,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -27,6 +28,7 @@ from app.models import (
     GenerateRequest, HealthResponse, ProjectCreate, ProjectUpdate,
     RewriteRequest, VoiceInfo, VoiceListResponse,
 )
+from app.elevenlabs_service import elevenlabs_service
 from app.tts_service import tts_service, OUTPUTS_DIR, UPLOADS_DIR, ALLOWED_AUDIO_EXTENSIONS
 
 logger = logging.getLogger(__name__)
@@ -79,6 +81,12 @@ async def api_list_voices():
     return VoiceListResponse(voices=[VoiceInfo(**v) for v in raw])
 
 
+@app.get("/api/elevenlabs-voices")
+async def api_elevenlabs_voices():
+    raw = elevenlabs_service.list_voices()
+    return {"voices": raw}
+
+
 @app.post("/api/upload-voice")
 async def upload_voice(
     file: UploadFile = File(...),
@@ -112,27 +120,54 @@ async def upload_voice(
 async def generate_audio(req: GenerateRequest):
     async def event_stream() -> AsyncGenerator[str, None]:
         try:
-            if not tts_service.is_loaded:
-                yield _sse({"status": "error", "message": "Model is not loaded yet"})
-                return
-            yield _sse({"status": "loading", "message": "Preparing voice clone..."})
-            try:
-                tts_service.resolve_voice(req.voice_id)
-            except FileNotFoundError as exc:
-                yield _sse({"status": "error", "message": str(exc)})
-                return
-            yield _sse({"status": "generating", "message": "Generating audio..."})
-            loop = asyncio.get_event_loop()
-            result = await loop.run_in_executor(
-                None,
-                lambda: tts_service.generate(text=req.text, voice_id=req.voice_id, language=req.language, seed=req.seed),
-            )
-            yield _sse({
-                "status": "complete",
-                "audio_url": f"/api/outputs/{result['output_filename']}",
-                "duration": result["duration"],
-                "generation_time": result["generation_time"],
-            })
+            if req.engine == "elevenlabs":
+                voice_id = req.voice_id
+                if not voice_id.startswith("el_"):
+                    el_voices = elevenlabs_service.list_voices()
+                    if not el_voices:
+                        yield _sse({"status": "error", "message": "No ElevenLabs voices available"})
+                        return
+                    voice_id = el_voices[0]["id"]
+                    logger.info("Voice '%s' not valid for ElevenLabs, falling back to '%s'", req.voice_id, voice_id)
+                yield _sse({"status": "loading", "message": "ElevenLabs에서 음성 생성 중..."})
+                yield _sse({"status": "generating", "message": "ElevenLabs 클라우드 TTS 생성 중..."})
+                loop = asyncio.get_event_loop()
+                result = await loop.run_in_executor(
+                    None,
+                    lambda: elevenlabs_service.generate(text=req.text, voice_id=voice_id, output_name=req.output_name),
+                )
+                media = "audio/mpeg" if result["output_filename"].endswith(".mp3") else "audio/wav"
+                yield _sse({
+                    "status": "complete",
+                    "audio_url": f"/api/outputs/{result['output_filename']}",
+                    "duration": result["duration"],
+                    "generation_time": result["generation_time"],
+                    "engine": "elevenlabs",
+                    "text_chars": result.get("text_chars", 0),
+                })
+            else:
+                if not tts_service.is_loaded:
+                    yield _sse({"status": "error", "message": "Model is not loaded yet"})
+                    return
+                yield _sse({"status": "loading", "message": "Preparing voice clone..."})
+                try:
+                    tts_service.resolve_voice(req.voice_id)
+                except FileNotFoundError as exc:
+                    yield _sse({"status": "error", "message": str(exc)})
+                    return
+                yield _sse({"status": "generating", "message": "Generating audio..."})
+                loop = asyncio.get_event_loop()
+                result = await loop.run_in_executor(
+                    None,
+                    lambda: tts_service.generate(text=req.text, voice_id=req.voice_id, language=req.language, seed=req.seed, output_name=req.output_name),
+                )
+                yield _sse({
+                    "status": "complete",
+                    "audio_url": f"/api/outputs/{result['output_filename']}",
+                    "duration": result["duration"],
+                    "generation_time": result["generation_time"],
+                    "engine": "qwen3",
+                })
         except Exception as exc:
             logger.error("Generation failed: %s", exc, exc_info=True)
             yield _sse({"status": "error", "message": str(exc)})
@@ -148,7 +183,8 @@ async def get_output(filename: str):
     file_path = os.path.join(OUTPUTS_DIR, filename)
     if not os.path.isfile(file_path):
         raise HTTPException(status_code=404, detail="File not found")
-    return FileResponse(file_path, media_type="audio/wav", filename=filename)
+    media_type = "audio/mpeg" if filename.endswith(".mp3") else "audio/wav"
+    return FileResponse(file_path, media_type=media_type, filename=filename)
 
 
 # ---------------------------------------------------------------------------
@@ -237,6 +273,14 @@ async def api_update_project(project_id: str, req: ProjectUpdate):
         raise HTTPException(status_code=404, detail="Project not found")
     fields = {k: v for k, v in req.model_dump().items() if v is not None}
     updated = update_project(project_id, **fields)
+    if "transcript_text" in fields:
+        edited_path = os.path.join(ARTIFACTS_DIR, f"{project_id}_edited.txt")
+        with open(edited_path, "w", encoding="utf-8") as f:
+            f.write(fields["transcript_text"])
+    if "rewritten_text" in fields:
+        rewritten_path = os.path.join(ARTIFACTS_DIR, f"{project_id}_rewritten.txt")
+        with open(rewritten_path, "w", encoding="utf-8") as f:
+            f.write(fields["rewritten_text"])
     return updated
 
 
@@ -249,12 +293,51 @@ async def api_delete_project(project_id: str):
         audio_path = os.path.join(AUDIO_FILES_DIR, proj["source_audio_filename"])
         if os.path.isfile(audio_path):
             os.remove(audio_path)
-    artifact_path = os.path.join(ARTIFACTS_DIR, f"{project_id}_transcript.txt")
-    if os.path.isfile(artifact_path):
-        os.remove(artifact_path)
+    for suffix in ("_transcript.txt", "_edited.txt", "_rewritten.txt"):
+        p = os.path.join(ARTIFACTS_DIR, f"{project_id}{suffix}")
+        if os.path.isfile(p):
+            os.remove(p)
     delete_project(project_id)
     logger.info("Deleted project %s", project_id)
     return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Project Audio Upload (from browser recorder)
+# ---------------------------------------------------------------------------
+
+@app.post("/api/projects/{project_id}/upload-audio")
+async def api_project_upload_audio(
+    project_id: str,
+    file: UploadFile = File(...),
+    filename: str = fastapi.Form(""),
+):
+    proj = get_project(project_id)
+    if not proj:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No file provided")
+    contents = await file.read()
+    if len(contents) == 0:
+        raise HTTPException(status_code=400, detail="Empty file")
+    if len(contents) > 100 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="File too large (max 100 MB)")
+
+    save_name = filename.strip() if filename.strip() else f"{uuid.uuid4().hex[:8]}_recording.webm"
+    save_name = save_name.replace("/", "").replace("\\", "").replace("..", "")
+    save_path = os.path.join(AUDIO_FILES_DIR, save_name)
+    with open(save_path, "wb") as fout:
+        fout.write(contents)
+
+    update_project(
+        project_id,
+        source_audio_filename=save_name,
+        source_audio_original_name=save_name,
+        source_audio_size=len(contents),
+        status="uploaded",
+    )
+    logger.info("Saved recording '%s' for project %s (%d bytes)", save_name, project_id, len(contents))
+    return {"ok": True, "filename": save_name, "size": len(contents)}
 
 
 # ---------------------------------------------------------------------------
@@ -322,7 +405,8 @@ async def api_project_transcribe(
                        source_audio_filename=safe_name,
                        source_audio_original_name=file.filename,
                        source_audio_size=len(contents),
-                       num_speakers=num_speakers)
+                       num_speakers=num_speakers,
+                       status="uploaded")
         src_path = save_path
     elif existing_file:
         if "/" in existing_file or "\\" in existing_file or ".." in existing_file:
@@ -335,7 +419,8 @@ async def api_project_transcribe(
                        source_audio_filename=existing_file,
                        source_audio_original_name=existing_file,
                        source_audio_size=fsize,
-                       num_speakers=num_speakers)
+                       num_speakers=num_speakers,
+                       status="uploaded")
     else:
         raise HTTPException(status_code=400, detail="No audio file provided")
 
@@ -361,6 +446,10 @@ async def api_project_transcribe(
             update_project(project_id,
                            transcript_json=json.dumps(result, ensure_ascii=False),
                            transcript_text=result.get("full_text", ""),
+                           asr_model="whisper-large-v3",
+                           asr_elapsed=result.get("processing_time", 0),
+                           asr_audio_duration=result.get("duration", 0),
+                           asr_cost=0.0,
                            status="transcribed")
 
             artifact_path = os.path.join(ARTIFACTS_DIR, f"{project_id}_transcript.txt")
@@ -403,7 +492,8 @@ FIX_TYPOS_SYSTEM_PROMPT = (
 )
 
 
-def _call_llm(model: str, system_prompt: str, user_text: str, temperature: float = 0.7) -> str:
+def _call_llm(model: str, system_prompt: str, user_text: str, temperature: float = 0.7) -> dict:
+    """Returns {"text": str, "input_tokens": int, "output_tokens": int}."""
     import requests as _requests
     if model.startswith("claude"):
         api_key = os.environ.get("ANTHROPIC_API_KEY", "")
@@ -417,7 +507,13 @@ def _call_llm(model: str, system_prompt: str, user_text: str, temperature: float
         }, timeout=120)
         if resp.status_code != 200:
             raise RuntimeError(f"Claude API error ({resp.status_code}): {resp.text[:300]}")
-        return resp.json()["content"][0]["text"]
+        body = resp.json()
+        usage = body.get("usage", {})
+        return {
+            "text": body["content"][0]["text"],
+            "input_tokens": usage.get("input_tokens", 0),
+            "output_tokens": usage.get("output_tokens", 0),
+        }
     else:
         api_key = os.environ.get("GROQ_API_KEY", "")
         if not api_key:
@@ -431,7 +527,13 @@ def _call_llm(model: str, system_prompt: str, user_text: str, temperature: float
         }, timeout=120)
         if resp.status_code != 200:
             raise RuntimeError(f"Groq API error ({resp.status_code}): {resp.text[:300]}")
-        return resp.json()["choices"][0]["message"]["content"]
+        body = resp.json()
+        usage = body.get("usage", {})
+        return {
+            "text": body["choices"][0]["message"]["content"],
+            "input_tokens": usage.get("prompt_tokens", 0),
+            "output_tokens": usage.get("completion_tokens", 0),
+        }
 
 
 @app.post("/api/fix-typos")
@@ -440,8 +542,15 @@ async def fix_typos(req: RewriteRequest):
         try:
             yield _sse({"status": "fixing", "message": "오타 수정 중..."})
             loop = asyncio.get_event_loop()
-            fixed = await loop.run_in_executor(None, lambda: _call_llm(req.model, FIX_TYPOS_SYSTEM_PROMPT, req.text, 0.2))
-            yield _sse({"status": "complete", "fixed_text": fixed})
+            t0 = time.time()
+            result = await loop.run_in_executor(None, lambda: _call_llm(req.model, FIX_TYPOS_SYSTEM_PROMPT, req.text, 0.2))
+            elapsed = round(time.time() - t0, 2)
+            yield _sse({
+                "status": "complete", "fixed_text": result["text"],
+                "input_tokens": result["input_tokens"],
+                "output_tokens": result["output_tokens"],
+                "elapsed": elapsed,
+            })
         except Exception as exc:
             logger.error("Fix typos failed: %s", exc, exc_info=True)
             yield _sse({"status": "error", "message": str(exc)})
@@ -455,8 +564,15 @@ async def rewrite_text(req: RewriteRequest):
         try:
             yield _sse({"status": "rewriting", "message": "박완서 문체로 변환 중..."})
             loop = asyncio.get_event_loop()
-            rewritten = await loop.run_in_executor(None, lambda: _call_llm(req.model, REWRITE_SYSTEM_PROMPT, req.text, 0.7))
-            yield _sse({"status": "complete", "rewritten_text": rewritten})
+            t0 = time.time()
+            result = await loop.run_in_executor(None, lambda: _call_llm(req.model, REWRITE_SYSTEM_PROMPT, req.text, 0.7))
+            elapsed = round(time.time() - t0, 2)
+            yield _sse({
+                "status": "complete", "rewritten_text": result["text"],
+                "input_tokens": result["input_tokens"],
+                "output_tokens": result["output_tokens"],
+                "elapsed": elapsed,
+            })
         except Exception as exc:
             logger.error("Rewrite failed: %s", exc, exc_info=True)
             yield _sse({"status": "error", "message": str(exc)})

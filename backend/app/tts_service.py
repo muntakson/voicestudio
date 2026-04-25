@@ -188,12 +188,20 @@ class TTSService:
         voice_id: str,
         language: str = "Auto",
         seed: Optional[int] = None,
+        output_name: Optional[str] = None,
     ) -> dict:
         if not self._loaded:
             raise RuntimeError("Model is not loaded yet")
 
         with self._lock:
-            return self._generate_locked(text, voice_id, language, seed)
+            return self._generate_locked(text, voice_id, language, seed, output_name)
+
+    @staticmethod
+    def _sanitize_filename(name: str) -> str:
+        import re
+        name = re.sub(r'[\\/:*?"<>|]', '', name).strip()
+        name = re.sub(r'\s+', '_', name)
+        return name[:80] if name else ""
 
     def _generate_locked(
         self,
@@ -201,6 +209,7 @@ class TTSService:
         voice_id: str,
         language: str,
         seed: Optional[int],
+        output_name: Optional[str] = None,
     ) -> dict:
         import soundfile as sf
 
@@ -228,8 +237,16 @@ class TTSService:
         duration = len(audio) / sr
 
         os.makedirs(OUTPUTS_DIR, exist_ok=True)
-        output_filename = f"{uuid.uuid4().hex}.wav"
-        output_path = os.path.join(OUTPUTS_DIR, output_filename)
+        prefix = self._sanitize_filename(output_name) if output_name else ""
+        if prefix:
+            output_filename = f"{prefix}_generated.wav"
+            output_path = os.path.join(OUTPUTS_DIR, output_filename)
+            if os.path.exists(output_path):
+                output_filename = f"{prefix}_generated_{uuid.uuid4().hex[:6]}.wav"
+                output_path = os.path.join(OUTPUTS_DIR, output_filename)
+        else:
+            output_filename = f"{uuid.uuid4().hex[:8]}.wav"
+            output_path = os.path.join(OUTPUTS_DIR, output_filename)
         sf.write(output_path, audio, sr)
 
         logger.info(

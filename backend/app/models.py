@@ -9,6 +9,8 @@ class GenerateRequest(BaseModel):
     voice_id: str = Field(..., description="Voice ID to clone")
     language: str = Field(default="Auto", description="Language: Auto, Chinese, English, Korean, Japanese, etc.")
     seed: Optional[int] = Field(default=None, description="Random seed for reproducibility")
+    engine: str = Field(default="elevenlabs", description="TTS engine: 'qwen3' or 'elevenlabs'")
+    output_name: Optional[str] = Field(default=None, description="Human-readable prefix for output filename")
 
 
 class VoiceInfo(BaseModel):
@@ -43,7 +45,29 @@ class ProjectUpdate(BaseModel):
     transcript_text: Optional[str] = None
     num_speakers: Optional[int] = None
     llm_model: Optional[str] = None
+    edited_transcript: Optional[str] = None
     rewritten_text: Optional[str] = None
     generated_audio_filename: Optional[str] = None
     generated_audio_size: Optional[int] = None
+    generated_audio_duration: Optional[float] = None
     status: Optional[str] = None
+    asr_model: Optional[str] = None
+    asr_elapsed: Optional[float] = None
+    asr_audio_duration: Optional[float] = None
+    asr_cost: Optional[float] = None
+    fix_typos_model: Optional[str] = None
+    fix_typos_input_tokens: Optional[int] = None
+    fix_typos_output_tokens: Optional[int] = None
+    fix_typos_elapsed: Optional[float] = None
+    fix_typos_cost: Optional[float] = None
+    rewrite_model: Optional[str] = None
+    rewrite_input_tokens: Optional[int] = None
+    rewrite_output_tokens: Optional[int] = None
+    rewrite_elapsed: Optional[float] = None
+    rewrite_cost: Optional[float] = None
+    tts_engine: Optional[str] = None
+    tts_model: Optional[str] = None
+    tts_text_chars: Optional[int] = None
+    tts_elapsed: Optional[float] = None
+    tts_cost: Optional[float] = None
+    total_cost: Optional[float] = None
