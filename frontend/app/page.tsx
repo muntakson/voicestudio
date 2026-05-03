@@ -21,11 +21,11 @@ interface Project {
   asr_model: string | null; asr_elapsed: number; asr_audio_duration: number; asr_cost: number;
   fix_typos_model: string | null; fix_typos_input_tokens: number; fix_typos_output_tokens: number; fix_typos_elapsed: number; fix_typos_cost: number;
   rewrite_model: string | null; rewrite_input_tokens: number; rewrite_output_tokens: number; rewrite_elapsed: number; rewrite_cost: number;
-  tts_engine: string | null; tts_model: string | null; tts_text_chars: number; tts_elapsed: number; tts_cost: number;
+  tts_text: string | null; tts_engine: string | null; tts_model: string | null; tts_text_chars: number; tts_elapsed: number; tts_cost: number;
   total_cost: number;
 }
 
-interface AudioFileInfo { filename: string; size: number; modified: string; }
+interface AudioFileInfo { filename: string; size: number; modified?: string; original_name?: string; file_type?: string; created_at?: string; }
 
 /* ------------------------------------------------------------------ */
 /*  Constants                                                          */
@@ -79,6 +79,45 @@ const LLM_RATES: Record<string, [number, number]> = {
   "llama-3.1-8b-instant": [0.05, 0.08],
 };
 const EL_COST_PER_CHAR = 0.00030;
+const QWEN3_CHARS_PER_SEC = 7;
+const EL_CHARS_PER_SEC = 80;
+
+function estimateTtsTime(chars: number, engine: string): string {
+  const cps = engine === "elevenlabs" ? EL_CHARS_PER_SEC : QWEN3_CHARS_PER_SEC;
+  const secs = Math.ceil(chars / cps);
+  if (secs < 60) return `~${secs}초`;
+  const m = Math.floor(secs / 60);
+  const s = secs % 60;
+  return s > 0 ? `~${m}분 ${s}초` : `~${m}분`;
+}
+
+const INFOGRAPHIC_PROMPT_TEMPLATE = `Create a professional, high-resolution infographic summarizing the life journey of [INSERT PERSON NAME]. Use a visual style similar to the attached example: a clean, aesthetic, and warm-toned illustration that combines metaphors with clear text.
+
+Core Visual Concept: Use a 'growth' metaphor (such as a tree or flower) to represent the person's life stages.
+
+Root/Base: Represent early life/background with symbolic icons (e.g., [insert symbol, like a seed or home]). Add a short text description: '[Insert early life text]'.
+
+Main Stem/Growth: Depict milestones as leaves or branches. For each milestone, include:
+A minimalist icon (e.g., graduation cap for education, heart for family, book for achievements).
+
+A bold, concise title.
+
+2 lines of descriptive text.
+
+
+Timeline/Process: At the bottom or side, include a clear linear progression (e.g., 'Past' → 'Present' → 'Future') showing key achievements as stages.
+
+Design Specifications:
+
+Color Palette: Use soft, warm, and professional colors (creams, muted greens, soft pinks/oranges).
+
+Layout: Well-balanced, structured, and easy to read. Ensure text is clearly separated from background elements.
+
+Typography: Use a clean, legible, modern sans-serif font.
+
+Style: Flat, modern vector illustration with subtle shadows for depth. Avoid busy or cluttered designs.
+
+Language: All text must be in Korean.`;
 
 function countWords(text: string): number {
   if (!text || !text.trim()) return 0;
@@ -265,7 +304,7 @@ export default function Home() {
   const [expandedSummary, setExpandedSummary] = useState<Set<string>>(new Set());
 
   /* ---- Studio state ---- */
-  const [activeTab, setActiveTab] = useState<"recorder" | "source" | "tts" | "asr" | "editor" | "settings">("asr");
+  const [activeTab, setActiveTab] = useState<"recorder" | "download" | "source" | "tts" | "infographic" | "asr" | "editor" | "settings">("asr");
 
   /* TTS */
   const [ttsEngine, setTtsEngine] = useState<"elevenlabs" | "qwen3">("elevenlabs");
@@ -275,6 +314,7 @@ export default function Home() {
   const [elVoices, setElVoices] = useState<Voice[]>([]);
   const [selectedVoice, setSelectedVoice] = useState("");
   const [seed, setSeed] = useState("");
+  const [postprocess, setPostprocess] = useState(false);
   const [gen, setGen] = useState<GenerationStatus>({ status: "idle", message: "", audioUrl: null, duration: null });
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [uploadFile, setUploadFile] = useState<File | null>(null);
@@ -295,6 +335,7 @@ export default function Home() {
   const asrFileRef = useRef<HTMLInputElement | null>(null);
   const [showAudioList, setShowAudioList] = useState(false);
   const [audioFiles, setAudioFiles] = useState<AudioFileInfo[]>([]);
+  const [selectedExistingFile, setSelectedExistingFile] = useState<string | null>(null);
 
   /* Recorder */
   const [isRecording, setIsRecording] = useState(false);
@@ -309,6 +350,31 @@ export default function Home() {
   const audioCtxRef = useRef<AudioContext | null>(null);
   const recorderTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const animFrameRef = useRef<number>(0);
+
+  /* Download tab */
+  const [dlUrl, setDlUrl] = useState("");
+  const [dlFilename, setDlFilename] = useState("");
+  const [dlStatus, setDlStatus] = useState<{ status: string; message: string }>({ status: "idle", message: "" });
+  const [dlLogs, setDlLogs] = useState<string[]>([]);
+  const dlLogRef = useRef<HTMLDivElement | null>(null);
+  const dlAbortRef = useRef<AbortController | null>(null);
+  const [dlAudioUrl, setDlAudioUrl] = useState<string | null>(null);
+  const [dlAudioFilename, setDlAudioFilename] = useState<string | null>(null);
+  /* Download audio editor (server-side peaks + HTML5 audio) */
+  const [dlAudReady, setDlAudReady] = useState(false);
+  const [dlAudDuration, setDlAudDuration] = useState(0);
+  const [dlAudPlaying, setDlAudPlaying] = useState(false);
+  const [dlAudTime, setDlAudTime] = useState(0);
+  const [dlAudSelection, setDlAudSelection] = useState<[number, number] | null>(null);
+  const [dlAudSaving, setDlAudSaving] = useState(false);
+  const [dlAudSaveMsg, setDlAudSaveMsg] = useState("");
+  const dlAudCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const dlAudRef = useRef<HTMLAudioElement | null>(null);
+  const dlAudAnimRef = useRef<number>(0);
+  const dlAudPeaksRef = useRef<number[]>([]);
+  const dlAudDragRef = useRef(false);
+  const dlAudSelRef = useRef<[number, number] | null>(null);
+  const dlAudUpdateRef = useRef(0);
 
   /* Audio Editor */
   const [audBuffer, setAudBuffer] = useState<AudioBuffer | null>(null);
@@ -337,13 +403,57 @@ export default function Home() {
   const [editorSaved, setEditorSaved] = useState(false);
   const rewrittenSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [rewrittenSaved, setRewrittenSaved] = useState(false);
+  const ttsSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [ttsSaved, setTtsSaved] = useState(false);
 
   /* Source tab */
   const [sourceProject, setSourceProject] = useState<Project | null>(null);
   const [srcTranscript, setSrcTranscript] = useState("");
+  const [srcAudioFiles, setSrcAudioFiles] = useState<AudioFileInfo[]>([]);
+  const [srcArtifacts, setSrcArtifacts] = useState<{ filename: string; label: string; artifact_type: string; file_size: number; created_at: string }[]>([]);
+  const [expandedArtifacts, setExpandedArtifacts] = useState<Set<string>>(new Set());
+  const [artifactContents, setArtifactContents] = useState<Record<string, string>>({});
+
+  /* Voice clip editor modal */
+  const [clipModal, setClipModal] = useState<{ filename: string; audioUrl: string } | null>(null);
+  const [clipReady, setClipReady] = useState(false);
+  const [clipDuration, setClipDuration] = useState(0);
+  const [clipPlaying, setClipPlaying] = useState(false);
+  const [clipTime, setClipTime] = useState(0);
+  const [clipSelection, setClipSelection] = useState<[number, number] | null>(null);
+  const [clipSaving, setClipSaving] = useState(false);
+  const [clipSaveMsg, setClipSaveMsg] = useState("");
+  const [clipCropName, setClipCropName] = useState("");
+  const [clipVoiceName, setClipVoiceName] = useState("");
+  const [clipRefText, setClipRefText] = useState("");
+  const [clipRegistering, setClipRegistering] = useState(false);
+  const [clipHistory, setClipHistory] = useState<{ from: string; to: string; start: number; end: number }[]>([]);
+  const [clipLogs, setClipLogs] = useState<string[]>([]);
+  const clipLogRef = useRef<HTMLDivElement | null>(null);
+  const clipCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const clipAudioRef = useRef<HTMLAudioElement | null>(null);
+  const clipAnimRef = useRef<number>(0);
+  const clipPeaksRef = useRef<number[]>([]);
+  const clipDragRef = useRef(false);
+  const clipSelRef = useRef<[number, number] | null>(null);
+  const clipUpdateRef = useRef(0);
   const [srcEdited, setSrcEdited] = useState("");
   const [srcRewritten, setSrcRewritten] = useState("");
   const [srcSaving, setSrcSaving] = useState<string | null>(null);
+
+  /* Debug console */
+  const [debugLogs, setDebugLogs] = useState<string[]>([]);
+  const debugRef = useRef<HTMLDivElement | null>(null);
+  const addDebug = useCallback((msg: string) => {
+    const ts = new Date().toLocaleTimeString("en-GB", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit", fractionalSecondDigits: 3 });
+    setDebugLogs((prev) => [...prev, `[${ts}] ${msg}`]);
+  }, []);
+
+  /* Infographic */
+  const [infoPrompt, setInfoPrompt] = useState("");
+  const [infoStatus, setInfoStatus] = useState<{ status: string; message: string }>({ status: "idle", message: "" });
+  const [infoImageUrl, setInfoImageUrl] = useState<string | null>(null);
+  const infoAbortRef = useRef<AbortController | null>(null);
 
   /* Settings */
   const [selectedModel, setSelectedModel] = useState("claude-sonnet-4-6");
@@ -357,6 +467,7 @@ export default function Home() {
   }, []);
 
   useEffect(() => { fetchProjects(); }, [fetchProjects]);
+  useEffect(() => { debugRef.current?.scrollTo(0, debugRef.current.scrollHeight); }, [debugLogs]);
 
   const createProject = async () => {
     if (!newProjectName.trim()) return;
@@ -381,7 +492,7 @@ export default function Home() {
 
   const resetStudioState = () => {
     setActiveTab("asr");
-    setAsrFile(null); setAsrStatus({ status: "idle", message: "" }); setTranscript(null); setCopied(false);
+    setAsrFile(null); setSelectedExistingFile(null); setAsrStatus({ status: "idle", message: "" }); setTranscript(null); setCopied(false); setAsrSaved(false);
     setEditorText(""); setRewrittenText(""); setRewriteStatus({ status: "idle", message: "" });
     setText(""); setGen({ status: "idle", message: "", audioUrl: null, duration: null });
     setIsRecording(false); setRecorderElapsed(0); setRecordingFilename(""); setRecordingSaving(false); setRecordingSaved(false);
@@ -391,6 +502,14 @@ export default function Home() {
     setAudBuffer(null); setAudUrl(null); setAudPlaying(false); setAudTime(0);
     setAudSelection(null); audSelRef.current = null; setAudSaving(false); setAudSaveMsg("");
     audPeaksRef.current = [];
+    // Download tab
+    setDlUrl(""); setDlFilename(""); setDlStatus({ status: "idle", message: "" }); setDlLogs([]);
+    setDlAudioUrl(null); setDlAudioFilename(null);
+    if (dlAudRef.current) dlAudRef.current.pause();
+    cancelAnimationFrame(dlAudAnimRef.current);
+    setDlAudReady(false); setDlAudDuration(0); setDlAudPlaying(false); setDlAudTime(0);
+    setDlAudSelection(null); dlAudSelRef.current = null; setDlAudSaving(false); setDlAudSaveMsg("");
+    dlAudPeaksRef.current = [];
   };
 
   const openProject = async (id: string) => {
@@ -421,6 +540,12 @@ export default function Home() {
       }
       if (proj.llm_model) setSelectedModel(proj.llm_model);
       if (proj.num_speakers) setNumSpeakers(proj.num_speakers);
+      if (proj.tts_text) {
+        setText(proj.tts_text);
+      }
+      if (proj.tts_engine) {
+        setTtsEngine(proj.tts_engine as "elevenlabs" | "qwen3");
+      }
       if (proj.generated_audio_filename) {
         setGen({ status: "complete", message: "Done!", audioUrl: `/api/outputs/${proj.generated_audio_filename}`, duration: null });
       }
@@ -471,6 +596,19 @@ export default function Home() {
     return () => { if (rewrittenSaveTimer.current) clearTimeout(rewrittenSaveTimer.current); };
   }, [rewrittenText, currentProjectId]);
 
+  // Auto-save TTS text to project with 1.5s debounce
+  useEffect(() => {
+    if (!currentProjectId || !text) return;
+    setTtsSaved(false);
+    if (ttsSaveTimer.current) clearTimeout(ttsSaveTimer.current);
+    ttsSaveTimer.current = setTimeout(async () => {
+      await patchProject({ tts_text: text });
+      setTtsSaved(true);
+      setTimeout(() => setTtsSaved(false), 2000);
+    }, 1500);
+    return () => { if (ttsSaveTimer.current) clearTimeout(ttsSaveTimer.current); };
+  }, [text, currentProjectId]);
+
   // Load source data when switching to source tab
   useEffect(() => {
     if (activeTab !== "source" || !currentProjectId) return;
@@ -483,6 +621,18 @@ export default function Home() {
         setSrcTranscript(proj.transcript_text || "");
         setSrcEdited(proj.edited_transcript || "");
         setSrcRewritten(proj.rewritten_text || "");
+      } catch { /* silent */ }
+    })();
+    (async () => {
+      try {
+        const res = await fetch(`/api/projects/${currentProjectId}/audio-files`);
+        if (res.ok) setSrcAudioFiles(await res.json());
+      } catch { /* silent */ }
+    })();
+    (async () => {
+      try {
+        const res = await fetch(`/api/projects/${currentProjectId}/artifacts`);
+        if (res.ok) setSrcArtifacts(await res.json());
       } catch { /* silent */ }
     })();
   }, [activeTab, currentProjectId]);
@@ -506,51 +656,26 @@ export default function Home() {
 
   const fetchAudioFiles = async () => {
     try {
-      const res = await fetch("/api/audio-files");
-      if (res.ok) setAudioFiles(await res.json());
+      if (currentProjectId) {
+        const res = await fetch(`/api/projects/${currentProjectId}/audio-files`);
+        if (res.ok) {
+          const data = await res.json();
+          setAudioFiles(data.map((f: any) => ({ ...f, size: f.file_size ?? f.size, modified: f.created_at ?? f.modified })));
+        }
+      } else {
+        const res = await fetch("/api/audio-files");
+        if (res.ok) setAudioFiles(await res.json());
+      }
     } catch { /* silent */ }
     setShowAudioList(true);
   };
 
-  const selectExistingAudio = async (filename: string) => {
+  const selectExistingAudio = (filename: string) => {
     setShowAudioList(false);
-    if (!currentProjectId) return;
-
-    asrAbortRef.current?.abort();
-    const controller = new AbortController();
-    asrAbortRef.current = controller;
+    setSelectedExistingFile(filename);
     setAsrFile(null);
-    setAsrStatus({ status: "loading", message: "오디오 파일 처리 중..." });
-    setTranscript(null); setCopied(false);
-
-    const form = new FormData();
-    form.append("existing_file", filename);
-    form.append("num_speakers", numSpeakers.toString());
-
-    try {
-      const res = await fetch(`/api/projects/${currentProjectId}/transcribe`, {
-        method: "POST", body: form, signal: controller.signal,
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ detail: "요청 실패" }));
-        setAsrStatus({ status: "error", message: err.detail || "요청 실패" });
-        return;
-      }
-      await readSSE(res, (event) => {
-        if (event.status === "complete") {
-          const tr = { segments: event.segments as TranscriptSegment[], full_text: event.full_text as string, duration: event.duration as number, processing_time: event.processing_time as number };
-          setTranscript(tr);
-          setAsrStatus({ status: "complete", message: "완료!" });
-        } else if (event.status === "error") {
-          setAsrStatus({ status: "error", message: (event.message as string) || "실패" });
-        } else {
-          setAsrStatus({ status: event.status as string, message: (event.message as string) || "" });
-        }
-      });
-    } catch (err: unknown) {
-      if ((err as Error).name === "AbortError") return;
-      setAsrStatus({ status: "error", message: err instanceof Error ? err.message : "알 수 없는 오류" });
-    }
+    setAsrStatus({ status: "idle", message: "" });
+    setTranscript(null); setCopied(false); setAsrSaved(false);
   };
 
   /* ================================================================ */
@@ -956,6 +1081,507 @@ export default function Home() {
   };
 
   /* ================================================================ */
+  /*  Download Audio Editor logic                                      */
+  /* ================================================================ */
+
+  useEffect(() => { dlLogRef.current?.scrollTo(0, dlLogRef.current.scrollHeight); }, [dlLogs]);
+
+  const addDlLog = useCallback((msg: string) => {
+    const ts = new Date().toLocaleTimeString("en-GB", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit", fractionalSecondDigits: 3 });
+    setDlLogs((prev) => [...prev, `[${ts}] ${msg}`]);
+  }, []);
+
+  const dlLoadPeaks = async (filename: string) => {
+    if (dlAudRef.current) dlAudRef.current.pause();
+    cancelAnimationFrame(dlAudAnimRef.current);
+    setDlAudTime(0);
+    setDlAudPlaying(false);
+    setDlAudSelection(null);
+    dlAudSelRef.current = null;
+    setDlAudSaveMsg("");
+    dlAudPeaksRef.current = [];
+    setDlAudReady(false);
+
+    addDlLog("파형 데이터 로딩 중...");
+    try {
+      const res = await fetch(`/api/audio-peaks/${encodeURIComponent(filename)}?num_peaks=800`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      dlAudPeaksRef.current = data.peaks;
+      setDlAudDuration(data.duration);
+      setDlAudReady(true);
+      addDlLog(`파형 로딩 완료 (${Math.floor(data.duration / 60)}분 ${Math.floor(data.duration % 60)}초)`);
+    } catch (e) {
+      addDlLog(`파형 로딩 실패: ${e}`);
+    }
+  };
+
+  const drawDlAudCanvas = useCallback(() => {
+    const canvas = dlAudCanvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    const w = canvas.width, h = canvas.height;
+    const peaks = dlAudPeaksRef.current;
+    const dur = dlAudDuration || (dlAudRef.current?.duration || 0);
+    const curTime = dlAudRef.current ? dlAudRef.current.currentTime : 0;
+    const sel = dlAudSelRef.current;
+    ctx.fillStyle = "#1e1a2e";
+    ctx.fillRect(0, 0, w, h);
+    if (peaks.length === 0 || dur === 0) return;
+    if (sel) {
+      const s = Math.min(sel[0], sel[1]), e = Math.max(sel[0], sel[1]);
+      const x1 = (s / dur) * w, x2 = (e / dur) * w;
+      ctx.fillStyle = "rgba(139, 92, 246, 0.2)";
+      ctx.fillRect(x1, 0, x2 - x1, h);
+      ctx.strokeStyle = "#8b5cf6";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(x1, 0); ctx.lineTo(x1, h); ctx.moveTo(x2, 0); ctx.lineTo(x2, h); ctx.stroke();
+    }
+    const barW = w / peaks.length;
+    for (let i = 0; i < peaks.length; i++) {
+      const barH = Math.max(1, peaks[i] * h * 0.85);
+      const peakT = (i / peaks.length) * dur;
+      ctx.fillStyle = peakT <= curTime ? "#8b5cf6" : "#4c3d6e";
+      ctx.fillRect(i * barW, (h - barH) / 2, Math.max(1, barW - 0.5), barH);
+    }
+    ctx.strokeStyle = "#3d3555"; ctx.lineWidth = 0.5;
+    ctx.beginPath(); ctx.moveTo(0, h / 2); ctx.lineTo(w, h / 2); ctx.stroke();
+    const cx = (curTime / dur) * w;
+    ctx.strokeStyle = "#ef4444"; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(cx, 0); ctx.lineTo(cx, h); ctx.stroke();
+    ctx.fillStyle = "#ef4444"; ctx.beginPath(); ctx.arc(cx, 4, 4, 0, Math.PI * 2); ctx.fill();
+  }, [dlAudDuration]);
+
+  useEffect(() => { if (dlAudReady) drawDlAudCanvas(); }, [dlAudReady, dlAudTime, dlAudSelection, drawDlAudCanvas]);
+
+  useEffect(() => {
+    const handleMove = (e: MouseEvent) => {
+      if (!dlAudDragRef.current) return;
+      const canvas = dlAudCanvasRef.current;
+      if (!canvas) return;
+      const dur = dlAudDuration || (dlAudRef.current?.duration || 0);
+      if (!dur) return;
+      const rect = canvas.getBoundingClientRect();
+      const x = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
+      const t = (x / rect.width) * dur;
+      dlAudSelRef.current = dlAudSelRef.current ? [dlAudSelRef.current[0], t] : null;
+      setDlAudSelection(dlAudSelRef.current);
+      drawDlAudCanvas();
+    };
+    const handleUp = () => {
+      if (!dlAudDragRef.current) return;
+      dlAudDragRef.current = false;
+      const sel = dlAudSelRef.current;
+      const dur = dlAudDuration || (dlAudRef.current?.duration || 0);
+      if (sel && Math.abs(sel[1] - sel[0]) < 0.05 * (dur / 100 || 1)) {
+        const audio = dlAudRef.current;
+        if (audio) { audio.currentTime = sel[0]; setDlAudTime(sel[0]); }
+        dlAudSelRef.current = null;
+        setDlAudSelection(null);
+      }
+      drawDlAudCanvas();
+    };
+    document.addEventListener("mousemove", handleMove);
+    document.addEventListener("mouseup", handleUp);
+    return () => { document.removeEventListener("mousemove", handleMove); document.removeEventListener("mouseup", handleUp); };
+  }, [dlAudDuration, drawDlAudCanvas]);
+
+  const onDlAudMouseDown = (e: React.MouseEvent) => {
+    const canvas = dlAudCanvasRef.current;
+    if (!canvas) return;
+    const dur = dlAudDuration || (dlAudRef.current?.duration || 0);
+    if (!dur) return;
+    const rect = canvas.getBoundingClientRect();
+    const t = ((e.clientX - rect.left) / rect.width) * dur;
+    dlAudDragRef.current = true;
+    dlAudSelRef.current = [t, t];
+    setDlAudSelection([t, t]);
+    const audio = dlAudRef.current;
+    if (audio) { audio.currentTime = t; setDlAudTime(t); }
+  };
+
+  const dlAudTick = () => {
+    const audio = dlAudRef.current;
+    if (!audio || audio.paused || audio.ended) {
+      if (audio?.ended) { setDlAudPlaying(false); setDlAudTime(0); audio.currentTime = 0; }
+      return;
+    }
+    const now = performance.now();
+    if (now - dlAudUpdateRef.current > 80) { setDlAudTime(audio.currentTime); dlAudUpdateRef.current = now; }
+    drawDlAudCanvas();
+    dlAudAnimRef.current = requestAnimationFrame(dlAudTick);
+  };
+
+  const dlAudPlay = () => {
+    const audio = dlAudRef.current;
+    if (!audio || !dlAudReady) return;
+    audio.play();
+    setDlAudPlaying(true);
+    dlAudAnimRef.current = requestAnimationFrame(dlAudTick);
+  };
+
+  const dlAudPause = () => {
+    dlAudRef.current?.pause();
+    cancelAnimationFrame(dlAudAnimRef.current);
+    setDlAudPlaying(false);
+    if (dlAudRef.current) setDlAudTime(dlAudRef.current.currentTime);
+    drawDlAudCanvas();
+  };
+
+  const dlAudStop = () => {
+    const audio = dlAudRef.current;
+    if (audio) { audio.pause(); audio.currentTime = 0; }
+    cancelAnimationFrame(dlAudAnimRef.current);
+    setDlAudPlaying(false);
+    setDlAudTime(0);
+    drawDlAudCanvas();
+  };
+
+  const dlAudSeek = (delta: number) => {
+    const audio = dlAudRef.current;
+    if (!audio) return;
+    audio.currentTime = Math.max(0, Math.min(audio.duration || 0, audio.currentTime + delta));
+    setDlAudTime(audio.currentTime);
+    drawDlAudCanvas();
+  };
+
+  const dlAudSaveClip = async () => {
+    if (!dlAudSelection || !dlAudioFilename) return;
+    const [a, b] = dlAudSelection;
+    const s = Math.min(a, b), e = Math.max(a, b);
+    if (e - s < 0.1) return;
+    const defName = dlAudioFilename.replace(/\.\w+$/, `_${fmtAudTime(s).replace(":", "m")}s-${fmtAudTime(e).replace(":", "m")}s.wav`);
+    const newName = prompt("저장할 파일명을 입력하세요:", defName);
+    if (!newName) return;
+    setDlAudSaving(true);
+    addDlLog(`클립 추출 중: ${fmtAudTime(s)} ~ ${fmtAudTime(e)} → ${newName}`);
+    try {
+      const form = new FormData();
+      form.append("source", dlAudioFilename);
+      form.append("start", s.toString());
+      form.append("end", e.toString());
+      form.append("output_name", newName);
+      const res = await fetch("/api/audio-clip", { method: "POST", body: form });
+      if (res.ok) {
+        const data = await res.json();
+        setDlAudSaveMsg(`"${data.filename}" 저장 완료!`);
+        addDlLog(`클립 저장 완료: ${data.filename} (${(data.size / 1024 / 1024).toFixed(1)} MB)`);
+      } else {
+        const err = await res.text();
+        setDlAudSaveMsg("저장 실패");
+        addDlLog(`클립 저장 실패: ${err}`);
+      }
+    } catch { setDlAudSaveMsg("저장 실패"); }
+    finally { setDlAudSaving(false); setTimeout(() => setDlAudSaveMsg(""), 5000); }
+  };
+
+  const resetDlAudEditor = () => {
+    if (dlAudRef.current) dlAudRef.current.pause();
+    cancelAnimationFrame(dlAudAnimRef.current);
+    setDlAudReady(false); setDlAudDuration(0); setDlAudPlaying(false); setDlAudTime(0);
+    setDlAudSelection(null); dlAudSelRef.current = null; setDlAudSaveMsg("");
+    dlAudPeaksRef.current = [];
+  };
+
+  const startDownload = async () => {
+    if (!dlUrl.trim()) return;
+    setDlStatus({ status: "downloading", message: "시작 중..." });
+    setDlLogs([]);
+    setDlAudioUrl(null);
+    setDlAudioFilename(null);
+    resetDlAudEditor();
+    addDlLog(`다운로드 시작: ${dlUrl}`);
+
+    try {
+      const ctrl = new AbortController();
+      dlAbortRef.current = ctrl;
+      const res = await fetch("/api/download-audio", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: dlUrl, filename: dlFilename || null, project_id: currentProjectId || null }),
+        signal: ctrl.signal,
+      });
+      if (!res.ok) {
+        const err = await res.text();
+        setDlStatus({ status: "error", message: err });
+        addDlLog(`오류: ${err}`);
+        return;
+      }
+      await readSSE(res, (evt) => {
+        const status = evt.status as string;
+        const message = evt.message as string;
+        addDlLog(message);
+        setDlStatus({ status, message });
+        if (status === "complete") {
+          const audioUrl = evt.audio_url as string;
+          const filename = evt.filename as string;
+          setDlAudioUrl(audioUrl);
+          setDlAudioFilename(filename);
+          addDlLog(`파일 저장됨: ${filename}`);
+          dlLoadPeaks(filename);
+        }
+      });
+    } catch (e) {
+      if ((e as Error).name !== "AbortError") {
+        setDlStatus({ status: "error", message: String(e) });
+        addDlLog(`오류: ${e}`);
+      }
+    }
+  };
+
+  /* ================================================================ */
+  /*  Voice Clip Editor Modal logic                                     */
+  /* ================================================================ */
+
+  useEffect(() => { clipLogRef.current?.scrollTo(0, clipLogRef.current.scrollHeight); }, [clipLogs]);
+
+  const addClipLog = useCallback((msg: string) => {
+    const ts = new Date().toLocaleTimeString("en-GB", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit", fractionalSecondDigits: 3 });
+    setClipLogs((prev) => [...prev, `[${ts}] ${msg}`]);
+  }, []);
+
+  const loadClipFile = async (filename: string) => {
+    const audioUrl = `/api/audio-files/${encodeURIComponent(filename)}`;
+    setClipModal({ filename, audioUrl });
+    setClipReady(false); setClipDuration(0); setClipTime(0); setClipPlaying(false);
+    setClipSelection(null); clipSelRef.current = null;
+    setClipSaveMsg(""); setClipSaving(false); setClipCropName("");
+    clipPeaksRef.current = [];
+    if (clipAudioRef.current) { clipAudioRef.current.pause(); clipAudioRef.current.src = audioUrl; }
+
+    addClipLog(`파일 로딩: ${filename}`);
+    try {
+      const res = await fetch(`/api/audio-peaks/${encodeURIComponent(filename)}?num_peaks=800`);
+      if (!res.ok) { addClipLog(`파형 로딩 실패 (HTTP ${res.status})`); return; }
+      const data = await res.json();
+      clipPeaksRef.current = data.peaks;
+      setClipDuration(data.duration);
+      setClipReady(true);
+      const m = Math.floor(data.duration / 60), s = Math.floor(data.duration % 60);
+      addClipLog(`파형 로딩 완료: ${m}분 ${s}초, ${data.peaks.length}개 피크`);
+    } catch (e) { addClipLog(`파형 로딩 오류: ${e}`); }
+  };
+
+  const openClipModal = async (file: AudioFileInfo) => {
+    setClipVoiceName(""); setClipRefText(""); setClipRegistering(false);
+    setClipHistory([]);
+    setClipLogs([]);
+    await loadClipFile(file.filename);
+  };
+
+  const closeClipModal = () => {
+    if (clipAudioRef.current) clipAudioRef.current.pause();
+    cancelAnimationFrame(clipAnimRef.current);
+    setClipModal(null);
+    setClipReady(false);
+  };
+
+  const drawClipCanvas = useCallback(() => {
+    const canvas = clipCanvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    const w = canvas.width, h = canvas.height;
+    const peaks = clipPeaksRef.current;
+    const dur = clipDuration || (clipAudioRef.current?.duration || 0);
+    const curTime = clipAudioRef.current ? clipAudioRef.current.currentTime : 0;
+    const sel = clipSelRef.current;
+    ctx.fillStyle = "#1e1a2e";
+    ctx.fillRect(0, 0, w, h);
+    if (peaks.length === 0 || dur === 0) return;
+    if (sel) {
+      const s = Math.min(sel[0], sel[1]), e = Math.max(sel[0], sel[1]);
+      const x1 = (s / dur) * w, x2 = (e / dur) * w;
+      ctx.fillStyle = "rgba(139, 92, 246, 0.2)";
+      ctx.fillRect(x1, 0, x2 - x1, h);
+      ctx.strokeStyle = "#8b5cf6"; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(x1, 0); ctx.lineTo(x1, h); ctx.moveTo(x2, 0); ctx.lineTo(x2, h); ctx.stroke();
+    }
+    const barW = w / peaks.length;
+    for (let i = 0; i < peaks.length; i++) {
+      const barH = Math.max(1, peaks[i] * h * 0.85);
+      const peakT = (i / peaks.length) * dur;
+      ctx.fillStyle = peakT <= curTime ? "#8b5cf6" : "#4c3d6e";
+      ctx.fillRect(i * barW, (h - barH) / 2, Math.max(1, barW - 0.5), barH);
+    }
+    ctx.strokeStyle = "#3d3555"; ctx.lineWidth = 0.5;
+    ctx.beginPath(); ctx.moveTo(0, h / 2); ctx.lineTo(w, h / 2); ctx.stroke();
+    const cx = (curTime / dur) * w;
+    ctx.strokeStyle = "#ef4444"; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(cx, 0); ctx.lineTo(cx, h); ctx.stroke();
+    ctx.fillStyle = "#ef4444"; ctx.beginPath(); ctx.arc(cx, 4, 4, 0, Math.PI * 2); ctx.fill();
+  }, [clipDuration]);
+
+  useEffect(() => { if (clipReady) drawClipCanvas(); }, [clipReady, clipTime, clipSelection, drawClipCanvas]);
+
+  useEffect(() => {
+    const handleMove = (e: MouseEvent) => {
+      if (!clipDragRef.current) return;
+      const canvas = clipCanvasRef.current;
+      if (!canvas) return;
+      const dur = clipDuration || (clipAudioRef.current?.duration || 0);
+      if (!dur) return;
+      const rect = canvas.getBoundingClientRect();
+      const x = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
+      const t = (x / rect.width) * dur;
+      clipSelRef.current = clipSelRef.current ? [clipSelRef.current[0], t] : null;
+      setClipSelection(clipSelRef.current);
+      drawClipCanvas();
+    };
+    const handleUp = () => {
+      if (!clipDragRef.current) return;
+      clipDragRef.current = false;
+      const sel = clipSelRef.current;
+      const dur = clipDuration || (clipAudioRef.current?.duration || 0);
+      if (sel && Math.abs(sel[1] - sel[0]) < 0.05 * (dur / 100 || 1)) {
+        const audio = clipAudioRef.current;
+        if (audio) { audio.currentTime = sel[0]; setClipTime(sel[0]); }
+        clipSelRef.current = null;
+        setClipSelection(null);
+      } else if (sel && Math.abs(sel[1] - sel[0]) >= 0.3) {
+        const s = Math.min(sel[0], sel[1]), e = Math.max(sel[0], sel[1]);
+        const base = (clipModal?.filename || "clip").replace(/\.\w+$/, "");
+        setClipCropName(`${base}_${fmtAudTime(s).replace(":", "m")}s-${fmtAudTime(e).replace(":", "m")}s`);
+      }
+      drawClipCanvas();
+    };
+    document.addEventListener("mousemove", handleMove);
+    document.addEventListener("mouseup", handleUp);
+    return () => { document.removeEventListener("mousemove", handleMove); document.removeEventListener("mouseup", handleUp); };
+  }, [clipDuration, drawClipCanvas]);
+
+  const onClipMouseDown = (e: React.MouseEvent) => {
+    const canvas = clipCanvasRef.current;
+    if (!canvas) return;
+    const dur = clipDuration || (clipAudioRef.current?.duration || 0);
+    if (!dur) return;
+    const rect = canvas.getBoundingClientRect();
+    const t = ((e.clientX - rect.left) / rect.width) * dur;
+    clipDragRef.current = true;
+    clipSelRef.current = [t, t];
+    setClipSelection([t, t]);
+    const audio = clipAudioRef.current;
+    if (audio) { audio.currentTime = t; setClipTime(t); }
+  };
+
+  const clipTick = () => {
+    const audio = clipAudioRef.current;
+    if (!audio || audio.paused || audio.ended) {
+      if (audio?.ended) { setClipPlaying(false); setClipTime(0); audio.currentTime = 0; }
+      return;
+    }
+    const now = performance.now();
+    if (now - clipUpdateRef.current > 80) { setClipTime(audio.currentTime); clipUpdateRef.current = now; }
+    drawClipCanvas();
+    clipAnimRef.current = requestAnimationFrame(clipTick);
+  };
+
+  const clipPlay = () => {
+    const audio = clipAudioRef.current;
+    if (!audio || !clipReady) return;
+    audio.play(); setClipPlaying(true);
+    clipAnimRef.current = requestAnimationFrame(clipTick);
+  };
+  const clipPause = () => {
+    clipAudioRef.current?.pause();
+    cancelAnimationFrame(clipAnimRef.current);
+    setClipPlaying(false);
+    if (clipAudioRef.current) setClipTime(clipAudioRef.current.currentTime);
+    drawClipCanvas();
+  };
+  const clipStop = () => {
+    const audio = clipAudioRef.current;
+    if (audio) { audio.pause(); audio.currentTime = 0; }
+    cancelAnimationFrame(clipAnimRef.current);
+    setClipPlaying(false); setClipTime(0);
+    drawClipCanvas();
+  };
+  const clipSeek = (delta: number) => {
+    const audio = clipAudioRef.current;
+    if (!audio) return;
+    audio.currentTime = Math.max(0, Math.min(audio.duration || 0, audio.currentTime + delta));
+    setClipTime(audio.currentTime);
+    drawClipCanvas();
+  };
+
+  const clipSaveCrop = async () => {
+    if (!clipModal) return;
+    if (!clipSelection) { addClipLog("구간을 선택하세요 — 파형 위에서 드래그하세요"); return; }
+    const [a, b] = clipSelection;
+    const s = Math.min(a, b), e = Math.max(a, b);
+    if (e - s < 0.3) { addClipLog("선택 구간이 너무 짧습니다 (최소 0.3초)"); return; }
+    if (!clipCropName.trim()) { addClipLog("파일이름을 넣으세요"); return; }
+
+    setClipSaving(true);
+    setClipSaveMsg("클립 추출 중...");
+    addClipLog(`클립 추출: ${clipModal.filename} [${fmtAudTime(s)} ~ ${fmtAudTime(e)}] (${(e - s).toFixed(1)}초)`);
+
+    try {
+      let saveName = clipCropName.trim();
+      if (!saveName.endsWith(".wav") && !saveName.endsWith(".mp3")) saveName += ".wav";
+      addClipLog(`저장 파일명: ${saveName}`);
+      const form = new FormData();
+      form.append("source", clipModal.filename);
+      form.append("start", s.toString());
+      form.append("end", e.toString());
+      form.append("output_name", saveName);
+      if (currentProjectId) form.append("project_id", currentProjectId);
+      const res = await fetch("/api/audio-clip", { method: "POST", body: form });
+      if (!res.ok) {
+        const errText = await res.text().catch(() => "알 수 없는 오류");
+        addClipLog(`클립 추출 실패: ${errText}`);
+        setClipSaveMsg("클립 추출 실패"); setClipSaving(false); return;
+      }
+      const data = await res.json();
+      setClipHistory((prev) => [...prev, { from: clipModal.filename, to: data.filename, start: s, end: e }]);
+      addClipLog(`저장 완료: ${data.filename} (${(data.size / 1024).toFixed(1)} KB, ${(e - s).toFixed(1)}초)`);
+      setClipSaveMsg(`"${data.filename}" 저장 완료 (${(e - s).toFixed(1)}초)`);
+
+      addClipLog(`잘린 파일 다시 로딩 중...`);
+      setTimeout(() => loadClipFile(data.filename), 500);
+    } catch (err) { addClipLog(`오류: ${err}`); setClipSaveMsg(`오류: ${err}`); }
+    finally { setClipSaving(false); }
+  };
+
+  const clipRegisterVoice = async () => {
+    if (!clipModal) return;
+    if (!clipVoiceName.trim()) { addClipLog("화자 이름을 넣으세요"); return; }
+
+    setClipRegistering(true);
+    setClipSaveMsg("음성 등록 중...");
+    addClipLog(`음성 등록 시작: 화자="${clipVoiceName.trim()}", 파일=${clipModal.filename}`);
+    if (clipRefText.trim()) addClipLog(`참조 텍스트: "${clipRefText.trim()}"`);
+
+    try {
+      addClipLog("오디오 파일 다운로드 중...");
+      const fileRes = await fetch(clipModal.audioUrl);
+      const blob = await fileRes.blob();
+      addClipLog(`파일 크기: ${(blob.size / 1024).toFixed(1)} KB`);
+      const regForm = new FormData();
+      regForm.append("file", blob, clipModal.filename);
+      regForm.append("name", clipVoiceName.trim());
+      regForm.append("ref_text", clipRefText.trim());
+      regForm.append("language", "Auto");
+      addClipLog("Qwen3-TTS 음성 등록 요청 중...");
+      const regRes = await fetch("/api/upload-voice", { method: "POST", body: regForm });
+      if (regRes.ok) {
+        const result = await regRes.json();
+        await fetchVoices();
+        setSelectedVoice(result.id);
+        setClipSaveMsg(`"${clipVoiceName.trim()}" 음성 등록 완료!`);
+        addClipLog(`음성 등록 완료! ID: ${result.id}, 이름: ${result.name}`);
+        addClipLog("오디오북생성 탭에서 이 음성을 선택할 수 있습니다.");
+      } else {
+        const err = await regRes.json().catch(() => ({ detail: "등록 실패" }));
+        setClipSaveMsg(`등록 실패: ${err.detail || "오류"}`);
+        addClipLog(`등록 실패: ${err.detail || "알 수 없는 오류"}`);
+      }
+    } catch (err) { setClipSaveMsg(`오류: ${err}`); addClipLog(`오류: ${err}`); }
+    finally { setClipRegistering(false); }
+  };
+
+  /* ================================================================ */
   /*  TTS logic                                                        */
   /* ================================================================ */
 
@@ -966,6 +1592,10 @@ export default function Home() {
       const data = await res.json();
       const list: Voice[] = data.voices ?? [];
       setVoices(list);
+      if (list.length > 0) {
+        const preferred = list.find((v) => v.id === "upload-68582e2a-성우");
+        setSelectedVoice((prev) => prev ? prev : (preferred?.id || list[0].id));
+      }
     } catch { /* silent */ }
   }, []);
 
@@ -1000,16 +1630,20 @@ export default function Home() {
 
   const generate = async () => {
     if (!text.trim() || !selectedVoice) return;
+    setDebugLogs([]);
     let voiceToUse = selectedVoice;
+    addDebug(`Engine: ${ttsEngine}, Voice: ${voiceToUse}, Text length: ${text.trim().length} chars`);
     if (ttsEngine === "elevenlabs" && !voiceToUse.startsWith("el_")) {
       const fallback = elVoices[0]?.id;
-      if (!fallback) { setGen({ status: "error", message: "ElevenLabs 음성을 먼저 선택하세요", audioUrl: null, duration: null }); return; }
+      if (!fallback) { addDebug("ERROR: No ElevenLabs voices available"); setGen({ status: "error", message: "ElevenLabs 음성을 먼저 선택하세요", audioUrl: null, duration: null }); return; }
+      addDebug(`Voice fallback: ${voiceToUse} → ${fallback}`);
       voiceToUse = fallback;
       setSelectedVoice(fallback);
     }
     if (ttsEngine === "qwen3" && voiceToUse.startsWith("el_")) {
       const fallback = voices[0]?.id;
-      if (!fallback) { setGen({ status: "error", message: "Qwen3 음성을 먼저 선택하세요", audioUrl: null, duration: null }); return; }
+      if (!fallback) { addDebug("ERROR: No Qwen3 voices available"); setGen({ status: "error", message: "Qwen3 음성을 먼저 선택하세요", audioUrl: null, duration: null }); return; }
+      addDebug(`Voice fallback: ${voiceToUse} → ${fallback}`);
       voiceToUse = fallback;
       setSelectedVoice(fallback);
     }
@@ -1017,16 +1651,32 @@ export default function Home() {
     const controller = new AbortController();
     abortRef.current = controller;
     setGen({ status: "loading", message: ttsEngine === "elevenlabs" ? "ElevenLabs 준비 중..." : "Preparing...", audioUrl: null, duration: null });
+    const voiceObj = (ttsEngine === "elevenlabs" ? elVoices : voices).find((v) => v.id === voiceToUse);
     const body: Record<string, unknown> = { text: text.trim(), voice_id: voiceToUse, language, engine: ttsEngine };
+    if (voiceObj?.name) body.voice_name = voiceObj.name;
     if (seed.trim() && ttsEngine === "qwen3") body.seed = parseInt(seed, 10);
+    if (ttsEngine === "qwen3") body.postprocess = postprocess;
     if (currentProjectId && currentProjectName) {
       body.output_name = currentProjectName;
+      body.project_id = currentProjectId;
     }
+    addDebug(`POST /api/generate → ${JSON.stringify(body).slice(0, 300)}`);
+    const t0 = Date.now();
     try {
       const res = await fetch("/api/generate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal: controller.signal });
-      if (!res.ok) { setGen({ status: "error", message: await res.text().catch(() => "Request failed"), audioUrl: null, duration: null }); return; }
+      addDebug(`Response: ${res.status} ${res.statusText} (${Date.now() - t0}ms)`);
+      if (!res.ok) {
+        const errText = await res.text().catch(() => "Request failed");
+        addDebug(`ERROR body: ${errText.slice(0, 500)}`);
+        setGen({ status: "error", message: errText, audioUrl: null, duration: null }); return;
+      }
+      addDebug("SSE stream started, reading events...");
+      let eventCount = 0;
       await readSSE(res, (event) => {
+        eventCount++;
+        addDebug(`SSE #${eventCount}: ${JSON.stringify(event).slice(0, 300)}`);
         if (event.status === "complete") {
+          addDebug(`Generation complete in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
           setGen({ status: "complete", message: "Done!", audioUrl: (event.audio_url as string) ?? null, duration: (event.duration as number) ?? null });
           if (currentProjectId && event.audio_url) {
             const fname = (event.audio_url as string).split("/").pop() || "";
@@ -1042,11 +1692,21 @@ export default function Home() {
               tts_cost: ttsCost,
             });
           }
-        } else if (event.status === "error") { setGen({ status: "error", message: (event.message as string) ?? "Failed", audioUrl: null, duration: null }); }
-        else { setGen((p) => ({ ...p, status: event.status as GenerationStatus["status"], message: (event.message as string) ?? p.message })); }
+        } else if (event.status === "error") {
+          addDebug(`SSE error: ${event.message}`);
+          setGen({ status: "error", message: (event.message as string) ?? "Failed", audioUrl: null, duration: null });
+        } else {
+          setGen((p) => ({ ...p, status: event.status as GenerationStatus["status"], message: (event.message as string) ?? p.message }));
+        }
       });
+      addDebug(`SSE stream ended. Total events: ${eventCount}, elapsed: ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+      if (eventCount === 0) {
+        addDebug("WARNING: Stream ended with 0 events — possible timeout or empty response");
+      }
     } catch (err: unknown) {
-      if ((err as Error).name === "AbortError") return;
+      const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+      if ((err as Error).name === "AbortError") { addDebug(`Aborted by user after ${elapsed}s`); return; }
+      addDebug(`FETCH ERROR after ${elapsed}s: ${err instanceof Error ? `${err.name}: ${err.message}` : String(err)}`);
       setGen({ status: "error", message: err instanceof Error ? err.message : "Unknown error", audioUrl: null, duration: null });
     }
   };
@@ -1060,15 +1720,19 @@ export default function Home() {
   /* ================================================================ */
 
   const transcribe = async () => {
-    if (!asrFile) return;
+    if (!asrFile && !selectedExistingFile) return;
     asrAbortRef.current?.abort();
     const controller = new AbortController();
     asrAbortRef.current = controller;
     setAsrStatus({ status: "loading", message: "오디오 파일 처리 중..." });
-    setTranscript(null); setCopied(false);
+    setTranscript(null); setCopied(false); setAsrSaved(false);
 
     const form = new FormData();
-    form.append("file", asrFile);
+    if (asrFile) {
+      form.append("file", asrFile);
+    } else if (selectedExistingFile) {
+      form.append("existing_file", selectedExistingFile);
+    }
     form.append("num_speakers", numSpeakers.toString());
 
     const url = currentProjectId ? `/api/projects/${currentProjectId}/transcribe` : "/api/transcribe";
@@ -1089,9 +1753,22 @@ export default function Home() {
     }
   };
 
+  const hasAsrInput = !!(asrFile || selectedExistingFile);
   const isTranscribing = asrStatus.status === "loading" || asrStatus.status === "transcribing";
+  const [asrSaved, setAsrSaved] = useState(false);
+  const [asrSaving, setAsrSaving] = useState(false);
   const copyTranscript = async () => { if (!transcript?.full_text) return; await navigator.clipboard.writeText(transcript.full_text); setCopied(true); setTimeout(() => setCopied(false), 2000); };
   const downloadTranscript = () => { if (!transcript?.full_text) return; const b = new Blob([transcript.full_text], { type: "text/plain;charset=utf-8" }); const u = URL.createObjectURL(b); const a = document.createElement("a"); a.href = u; a.download = "transcript.txt"; a.click(); URL.revokeObjectURL(u); };
+  const saveTranscript = async () => {
+    if (!transcript?.full_text || !currentProjectId) return;
+    setAsrSaving(true);
+    try {
+      await patchProject({ transcript_text: transcript.full_text });
+      setAsrSaved(true);
+      setTimeout(() => setAsrSaved(false), 2000);
+    } catch { /* silent */ }
+    setAsrSaving(false);
+  };
 
   /* ================================================================ */
   /*  Editor logic                                                     */
@@ -1104,6 +1781,12 @@ export default function Home() {
   }, [transcript]);
 
   useEffect(() => { if (activeTab === "editor" && transcript && !editorText) loadTranscriptToEditor(); }, [activeTab, transcript, editorText, loadTranscriptToEditor]);
+
+  useEffect(() => {
+    if (activeTab === "infographic" && !infoPrompt && srcRewritten) {
+      setInfoPrompt(INFOGRAPHIC_PROMPT_TEMPLATE + "\n\n---\n\n아래는 인포그래픽에 사용할 LLM 변환텍스트입니다:\n\n" + srcRewritten);
+    }
+  }, [activeTab, infoPrompt, srcRewritten]);
 
   const removeSpeaker = (n: number) => { setEditorText(editorText.split("\n").filter((l) => !l.startsWith(`[화자 ${n}]`)).join("\n")); };
   const speakersInText = (): number[] => {
@@ -1427,12 +2110,18 @@ export default function Home() {
         <h1 className="text-4xl font-bold tracking-tight sm:text-5xl">
           <span className="bg-gradient-to-r from-accent-400 to-purple-400 bg-clip-text text-transparent">Voice Studio</span>
         </h1>
-        <p className="mt-2 text-[#a09bb5]">오디오회고록 제작 서비스 - 음성인식, 녹취록 생성, AI편집, AI 오디오북 생성</p>
+        {currentProjectName && (
+          <div className="mt-2 flex items-center justify-center gap-2">
+            <span className="text-lg font-medium text-white">{currentProjectName}</span>
+            {currentProjectId && <span className="rounded bg-[#2e2845] px-2 py-0.5 text-xs font-mono text-[#8a84a0]">{currentProjectId.slice(0, 8)}</span>}
+          </div>
+        )}
+        <p className="mt-1 text-[#a09bb5]">오디오회고록 제작 서비스 - 음성인식, 녹취록 생성, AI편집, AI 오디오북 생성</p>
         <div className="mt-6 inline-flex rounded-lg border border-[#2e2845] bg-[#1a1726] p-1">
-          {(["recorder", "asr", "editor", "source", "tts", "settings"] as const).map((tab) => (
+          {(["recorder", "download", "asr", "editor", "source", "tts", "infographic", "settings"] as const).map((tab) => (
             <button key={tab} onClick={() => setActiveTab(tab)}
               className={`rounded-md px-6 py-2 text-sm font-medium transition-colors ${activeTab === tab ? "bg-accent-600 text-white" : "text-[#a09bb5] hover:text-white"}`}>
-              {tab === "recorder" ? "음성녹음" : tab === "source" ? "소스" : tab === "tts" ? "오디오북생성" : tab === "asr" ? "음성인식" : tab === "editor" ? "글편집" : "설정"}
+              {tab === "recorder" ? "음성녹음" : tab === "download" ? "오디오다운로드" : tab === "source" ? "소스" : tab === "tts" ? "오디오북생성" : tab === "infographic" ? "인포그래픽" : tab === "asr" ? "음성인식" : tab === "editor" ? "글편집" : "설정"}
             </button>
           ))}
         </div>
@@ -1444,8 +2133,11 @@ export default function Home() {
           <div className="space-y-6">
             <section className="card">
               <div className="mb-3 flex items-center justify-between">
-                <h2 className="text-lg font-semibold">Text to Speak</h2>
-                {text.trim() && <span className="text-xs text-[#b8b0cc]">{text.length.toLocaleString()}자 · {countWords(text).toLocaleString()}단어{ttsEngine === "elevenlabs" && <span className="ml-1 text-amber-300">(≈${(text.length * EL_COST_PER_CHAR).toFixed(3)})</span>}</span>}
+                <div className="flex items-center gap-2">
+                  <h2 className="text-lg font-semibold">Text to Speak</h2>
+                  {ttsSaved && <span className="text-xs text-green-400">저장됨</span>}
+                </div>
+                {text.trim() && <span className="text-xs text-[#b8b0cc]">{text.length.toLocaleString()}자 · {countWords(text).toLocaleString()}단어 · {estimateTtsTime(text.length, ttsEngine)}{ttsEngine === "elevenlabs" && <span className="ml-1 text-amber-300">(≈${(text.length * EL_COST_PER_CHAR).toFixed(3)})</span>}</span>}
               </div>
               <textarea className="input-field min-h-[200px] resize-y text-sm leading-relaxed" placeholder="Type or paste the text you want to convert to speech..."
                 value={text} onChange={(e) => setText(e.target.value)} />
@@ -1462,16 +2154,23 @@ export default function Home() {
                     className={`flex-1 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${ttsEngine === "elevenlabs" ? "bg-accent-600/30 border border-accent-500/50 text-white" : "bg-[#1e1a2e] border border-transparent hover:bg-[#2a2540] text-[#c0bcd0]"}`}>
                     ElevenLabs <span className="text-[10px] text-accent-400/70">Cloud</span>
                   </button>
-                  <button onClick={() => { setTtsEngine("qwen3"); setSelectedVoice(voices[0]?.id || ""); }}
+                  <button onClick={() => { setTtsEngine("qwen3"); const pref = voices.find((v) => v.id === "upload-68582e2a-성우"); setSelectedVoice(pref?.id || voices[0]?.id || ""); }}
                     className={`flex-1 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${ttsEngine === "qwen3" ? "bg-accent-600/30 border border-accent-500/50 text-white" : "bg-[#1e1a2e] border border-transparent hover:bg-[#2a2540] text-[#c0bcd0]"}`}>
                     Qwen3-TTS <span className="text-[10px] text-accent-400/70">Local</span>
                   </button>
                 </div>
               </div>
               {ttsEngine === "qwen3" && (
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div><label className="label">Language</label><select className="input-field cursor-pointer" value={language} onChange={(e) => setLanguage(e.target.value)}>{LANGUAGES.map((l) => <option key={l} value={l}>{l}</option>)}</select></div>
-                  <div><label className="label">Seed (optional)</label><input type="number" className="input-field" placeholder="Random" value={seed} onChange={(e) => setSeed(e.target.value)} /></div>
+                <div className="space-y-3">
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div><label className="label">Language</label><select className="input-field cursor-pointer" value={language} onChange={(e) => setLanguage(e.target.value)}>{LANGUAGES.map((l) => <option key={l} value={l}>{l}</option>)}</select></div>
+                    <div><label className="label">Seed (optional)</label><input type="number" className="input-field" placeholder="Random" value={seed} onChange={(e) => setSeed(e.target.value)} /></div>
+                  </div>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" checked={postprocess} onChange={(e) => setPostprocess(e.target.checked)} className="h-4 w-4 rounded border-[#3d3555] bg-[#1e1a2e] text-accent-500 focus:ring-accent-500/50" />
+                    <span className="text-sm text-[#c0bcd0]">Audio post-processing</span>
+                    <span className="text-[10px] text-[#6b6580]">(compression, normalization)</span>
+                  </label>
                 </div>
               )}
               <button className="btn-primary mt-6 w-full text-lg" disabled={!text.trim() || !selectedVoice || isGenerating} onClick={generate}>
@@ -1489,6 +2188,19 @@ export default function Home() {
                 {gen.status === "complete" && gen.audioUrl && (
                   <div className="space-y-4"><div className="flex items-center gap-2 text-sm text-green-400"><CheckIcon /><span>Done!{gen.duration != null && <span className="ml-2 text-[#6b6580]">({gen.duration.toFixed(1)}s)</span>}</span></div>
                     <AudioPlayer src={gen.audioUrl} /><a href={gen.audioUrl} download className="btn-secondary inline-flex mt-2"><DownloadIcon /> Download</a></div>)}
+              </section>
+            )}
+            {debugLogs.length > 0 && (
+              <section className="card">
+                <div className="mb-3 flex items-center justify-between">
+                  <h2 className="text-lg font-semibold">Debug Console</h2>
+                  <button className="btn-secondary text-xs" onClick={() => setDebugLogs([])}>Clear</button>
+                </div>
+                <div ref={debugRef} className="max-h-[300px] overflow-y-auto rounded-lg bg-[#0d0b14] border border-[#2e2845] p-3 font-mono text-xs leading-relaxed">
+                  {debugLogs.map((log, i) => (
+                    <div key={i} className={`${log.includes("ERROR") || log.includes("FETCH ERROR") ? "text-red-400" : log.includes("WARNING") ? "text-amber-400" : log.includes("complete") ? "text-green-400" : "text-[#a09bb5]"}`}>{log}</div>
+                  ))}
+                </div>
               </section>
             )}
           </div>
@@ -1518,6 +2230,100 @@ export default function Home() {
               {ttsEngine === "qwen3" && currentVoice?.ref_text && <div className="mt-3 rounded-lg bg-[#1e1a2e] px-3 py-2"><p className="text-[10px] uppercase tracking-wider text-[#6b6580] mb-1">Reference transcript</p><p className="text-xs text-[#a09bb5] line-clamp-3">{currentVoice.ref_text}</p></div>}
             </section>
           </aside>
+        </div>
+      )}
+
+      {/* ============ Infographic Tab ============ */}
+      {activeTab === "infographic" && (
+        <div className="mx-auto max-w-4xl space-y-6">
+          <section className="card">
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="text-lg font-semibold">Prompt</h2>
+              <button
+                className="btn-primary text-sm"
+                disabled={infoStatus.status === "generating" || !infoPrompt.trim()}
+                onClick={async () => {
+                  infoAbortRef.current?.abort();
+                  const controller = new AbortController();
+                  infoAbortRef.current = controller;
+                  setInfoStatus({ status: "generating", message: "Gemini 2.5 Flash로 인포그래픽 생성 중..." });
+                  setInfoImageUrl(null);
+                  try {
+                    const res = await fetch("/api/generate-infographic", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ prompt: infoPrompt, project_id: currentProjectId || "" }),
+                      signal: controller.signal,
+                    });
+                    if (!res.ok) {
+                      setInfoStatus({ status: "error", message: await res.text().catch(() => "Request failed") });
+                      return;
+                    }
+                    await readSSE(res, (event) => {
+                      if (event.status === "complete") {
+                        setInfoStatus({ status: "complete", message: `생성 완료 (${event.elapsed}초)` });
+                        setInfoImageUrl(event.image_url as string);
+                      } else if (event.status === "error") {
+                        setInfoStatus({ status: "error", message: event.message as string });
+                      } else if (event.message) {
+                        setInfoStatus({ status: "generating", message: event.message as string });
+                      }
+                    });
+                  } catch (err) {
+                    if ((err as Error).name !== "AbortError") {
+                      setInfoStatus({ status: "error", message: (err as Error).message });
+                    }
+                  }
+                }}
+              >
+                {infoStatus.status === "generating" ? <><Spinner small /> 생성 중...</> : "인포그래픽 생성"}
+              </button>
+            </div>
+            <textarea
+              className="input-field min-h-[300px] resize-y text-sm leading-relaxed"
+              value={infoPrompt}
+              onChange={(e) => setInfoPrompt(e.target.value)}
+              placeholder="인포그래픽 프롬프트를 입력하세요..."
+            />
+            {!infoPrompt && srcRewritten && (
+              <button
+                className="mt-2 btn-secondary text-xs"
+                onClick={() => setInfoPrompt(INFOGRAPHIC_PROMPT_TEMPLATE + "\n\n---\n\n아래는 인포그래픽에 사용할 LLM 변환텍스트입니다:\n\n" + srcRewritten)}
+              >
+                LLM 변환텍스트로 프롬프트 채우기
+              </button>
+            )}
+            {!infoPrompt && !srcRewritten && (
+              <p className="mt-2 text-xs text-[#6b6580]">소스 탭의 LLM 변환텍스트가 있으면 자동으로 프롬프트에 포함할 수 있습니다.</p>
+            )}
+            {infoStatus.status === "generating" && (
+              <div className="mt-3 flex items-center gap-2 text-sm text-accent-400"><Spinner small /> {infoStatus.message}</div>
+            )}
+            {infoStatus.status === "error" && (
+              <div className="mt-3 rounded-lg bg-red-500/10 border border-red-500/30 px-4 py-3 text-sm text-red-300">{infoStatus.message}</div>
+            )}
+          </section>
+
+          {infoImageUrl && (
+            <section className="card">
+              <div className="mb-3 flex items-center justify-between">
+                <h2 className="text-lg font-semibold">생성된 인포그래픽</h2>
+                <a
+                  href={infoImageUrl}
+                  download
+                  className="btn-secondary text-sm flex items-center gap-1.5"
+                >
+                  <DownloadIcon /> 다운로드
+                </a>
+              </div>
+              <div className="rounded-lg overflow-hidden border border-[#2e2845]">
+                <img src={infoImageUrl} alt="Generated infographic" className="w-full h-auto" />
+              </div>
+              {infoStatus.status === "complete" && infoStatus.message && (
+                <p className="mt-2 text-xs text-[#8a84a0]">{infoStatus.message}</p>
+              )}
+            </section>
+          )}
         </div>
       )}
 
@@ -1666,6 +2472,133 @@ export default function Home() {
         </div>
       )}
 
+      {/* ============ Download Tab ============ */}
+      {activeTab === "download" && (
+        <div className="grid gap-6 lg:grid-cols-[1fr_340px]">
+          <div className="space-y-6">
+            <section className="card">
+              <h2 className="mb-3 text-lg font-semibold">오디오 다운로드</h2>
+              <div className="space-y-3">
+                <div>
+                  <label className="label">URL</label>
+                  <input type="text" className="input-field" placeholder="YouTube, SoundCloud 등 URL을 입력하세요"
+                    value={dlUrl} onChange={(e) => setDlUrl(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter" && dlStatus.status !== "downloading") startDownload(); }}
+                    disabled={dlStatus.status === "downloading"} />
+                </div>
+                <div>
+                  <label className="label">파일명 (선택)</label>
+                  <input type="text" className="input-field" placeholder="저장할 파일명 (비어있으면 원본 제목 사용)"
+                    value={dlFilename} onChange={(e) => setDlFilename(e.target.value)}
+                    disabled={dlStatus.status === "downloading"} />
+                </div>
+                <div className="flex items-center gap-3">
+                  <button className="btn-primary px-6 py-2.5" onClick={startDownload}
+                    disabled={!dlUrl.trim() || dlStatus.status === "downloading"}>
+                    {dlStatus.status === "downloading" ? <><Spinner small /> 다운로드 중...</> : <><DownloadIcon /> 다운로드</>}
+                  </button>
+                  {dlStatus.status === "downloading" && (
+                    <button className="btn-secondary px-4 py-2.5 text-sm" onClick={() => dlAbortRef.current?.abort()}>취소</button>
+                  )}
+                </div>
+                {dlStatus.status === "error" && (
+                  <p className="text-sm text-red-400">{dlStatus.message}</p>
+                )}
+                {dlStatus.status === "complete" && (
+                  <p className="text-sm text-green-400">{dlStatus.message}</p>
+                )}
+              </div>
+            </section>
+
+            {/* Debug Console */}
+            <section className="card">
+              <div className="mb-2 flex items-center justify-between">
+                <h2 className="text-sm font-semibold text-[#a09bb5]">Debug Console</h2>
+                <button className="text-xs text-[#6b6580] hover:text-white" onClick={() => setDlLogs([])}>Clear</button>
+              </div>
+              <div ref={dlLogRef} className="h-40 overflow-y-auto rounded-lg bg-[#0d0b14] border border-[#2e2845] p-3 font-mono text-xs text-[#8a84a0] space-y-0.5">
+                {dlLogs.length === 0 ? (
+                  <p className="text-[#4a4560]">다운로드를 시작하면 로그가 표시됩니다...</p>
+                ) : dlLogs.map((log, i) => (
+                  <p key={i} className={log.includes("오류") || log.includes("실패") ? "text-red-400" : log.includes("완료") || log.includes("저장") ? "text-green-400" : ""}>{log}</p>
+                ))}
+              </div>
+            </section>
+
+            {/* Audio Editor (server-side peaks) */}
+            {dlAudReady && dlAudioUrl && (
+              <section className="card">
+                <h2 className="mb-3 text-lg font-semibold">오디오 편집기</h2>
+                <p className="mb-2 text-xs text-[#6b6580]">{dlAudioFilename}</p>
+                {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions */}
+                <div className="relative rounded-lg border border-[#2e2845] overflow-hidden cursor-crosshair"
+                  onMouseDown={onDlAudMouseDown}>
+                  <canvas ref={dlAudCanvasRef} width={900} height={140} className="w-full h-36 block" />
+                </div>
+
+                <div className="mt-2 flex items-center justify-between text-xs">
+                  <span className="font-mono text-[#c0bcd0] tabular-nums">
+                    {fmtAudTime(dlAudTime)} / {fmtAudTime(dlAudDuration)}
+                  </span>
+                  {dlAudSelection && Math.abs(dlAudSelection[1] - dlAudSelection[0]) >= 0.5 && (
+                    <span className="font-mono text-purple-400 tabular-nums">
+                      선택: {fmtAudTime(Math.min(dlAudSelection[0], dlAudSelection[1]))} &ndash; {fmtAudTime(Math.max(dlAudSelection[0], dlAudSelection[1]))}
+                      {" "}({fmtAudTime(Math.abs(dlAudSelection[1] - dlAudSelection[0]))})
+                    </span>
+                  )}
+                </div>
+
+                <div className="mt-3 flex items-center gap-2">
+                  <button className="btn-secondary px-3 py-2 text-sm" onClick={() => dlAudSeek(-5)} title="-5초"><BwdIcon /></button>
+                  {!dlAudPlaying ? (
+                    <button className="btn-primary px-4 py-2 text-sm" onClick={dlAudPlay}><PlayIcon /> 재생</button>
+                  ) : (
+                    <button className="btn-secondary px-4 py-2 text-sm" onClick={dlAudPause}><PauseIcon /> 일시정지</button>
+                  )}
+                  <button className="btn-secondary px-3 py-2 text-sm" onClick={dlAudStop} title="정지"><AudStopIcon /></button>
+                  <button className="btn-secondary px-3 py-2 text-sm" onClick={() => dlAudSeek(5)} title="+5초"><FwdIcon /></button>
+                  <button className="btn-secondary px-3 py-2 text-sm" onClick={() => dlAudSeek(30)} title="+30초"><FwdIcon /> 30</button>
+                  <button className="btn-secondary px-3 py-2 text-sm" onClick={() => dlAudSeek(-30)} title="-30초">30 <BwdIcon /></button>
+                </div>
+
+                <div className="mt-3 flex items-center gap-2 border-t border-[#2e2845] pt-3">
+                  <span className="text-xs text-[#9590a8] mr-1">선택 영역:</span>
+                  <button className="btn-secondary px-3 py-1.5 text-xs" onClick={() => { setDlAudSelection(null); dlAudSelRef.current = null; drawDlAudCanvas(); }}
+                    disabled={!dlAudSelection}>
+                    선택 해제
+                  </button>
+                  <button className="btn-primary px-4 py-1.5 text-xs" onClick={dlAudSaveClip}
+                    disabled={dlAudSaving || !dlAudSelection || Math.abs(dlAudSelection[1] - dlAudSelection[0]) < 0.5}>
+                    <ScissorsIcon /> 선택 구간 저장
+                  </button>
+                  {dlAudSaving && <Spinner small />}
+                  {dlAudSaveMsg && <span className={`text-xs ${dlAudSaveMsg.includes("실패") ? "text-red-400" : "text-green-400"}`}>{dlAudSaveMsg}</span>}
+                </div>
+
+                <audio ref={dlAudRef} src={dlAudioUrl} preload="metadata"
+                  onLoadedMetadata={() => { if (dlAudRef.current && dlAudDuration === 0) setDlAudDuration(dlAudRef.current.duration); }}
+                  onEnded={() => { cancelAnimationFrame(dlAudAnimRef.current); setDlAudPlaying(false); setDlAudTime(0); drawDlAudCanvas(); }}
+                  style={{ display: "none" }} />
+              </section>
+            )}
+          </div>
+          <aside className="space-y-6">
+            <section className="card">
+              <h2 className="mb-3 text-lg font-semibold">사용 방법</h2>
+              <ul className="space-y-2 text-sm text-[#c0bcd0]">
+                <li className="flex gap-2"><span className="text-accent-400">1.</span>YouTube, SoundCloud 등의 URL을 입력하세요.</li>
+                <li className="flex gap-2"><span className="text-accent-400">2.</span>파일명을 지정하거나 비워두면 원본 제목을 사용합니다.</li>
+                <li className="flex gap-2"><span className="text-accent-400">3.</span>다운로드 버튼을 클릭하면 MP3로 변환됩니다.</li>
+                <li className="flex gap-2"><span className="text-accent-400">4.</span>다운로드 완료 후 파형 에디터가 나타납니다.</li>
+                <li className="flex gap-2"><span className="text-accent-400">5.</span>파형을 드래그하여 원하는 구간을 선택하세요.</li>
+                <li className="flex gap-2"><span className="text-accent-400">6.</span>&ldquo;선택 영역만&rdquo;으로 원하는 부분만 추출하세요.</li>
+                <li className="flex gap-2"><span className="text-accent-400">7.</span>&ldquo;다른 이름으로 저장&rdquo;으로 클립을 저장하세요.</li>
+              </ul>
+            </section>
+          </aside>
+        </div>
+      )}
+
       {/* ============ ASR Tab ============ */}
       {activeTab === "asr" && (
         <div className="grid gap-6 lg:grid-cols-[1fr_340px]">
@@ -1680,17 +2613,18 @@ export default function Home() {
               <div className="relative flex min-h-[160px] cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed border-[#2e2845] bg-[#241f33]/50 p-6 transition-colors hover:border-accent-500/50 hover:bg-[#241f33]"
                 onClick={() => asrFileRef.current?.click()}
                 onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
-                onDrop={(e) => { e.preventDefault(); e.stopPropagation(); const f = e.dataTransfer.files?.[0]; if (f) { setAsrFile(f); setAsrStatus({ status: "idle", message: "" }); setTranscript(null); } }}>
+                onDrop={(e) => { e.preventDefault(); e.stopPropagation(); const f = e.dataTransfer.files?.[0]; if (f) { setAsrFile(f); setSelectedExistingFile(null); setAsrStatus({ status: "idle", message: "" }); setTranscript(null); } }}>
                 {asrFile ? (<><MicIcon /><p className="mt-3 text-sm font-medium text-[#e8e4f0]">{asrFile.name}</p><p className="mt-1 text-xs text-[#6b6580]">{fmtSize(asrFile.size)}</p><p className="mt-2 text-xs text-accent-400">클릭하여 다른 파일 선택</p></>)
+                  : selectedExistingFile ? (<><MicIcon /><p className="mt-3 text-sm font-medium text-[#e8e4f0]">{selectedExistingFile}</p><p className="mt-2 text-xs text-accent-400">클릭하여 다른 파일 선택</p></>)
                   : (<><UploadIcon /><p className="mt-3 text-sm text-[#a09bb5]">클릭하거나 파일을 드래그하세요</p><p className="mt-1 text-xs text-[#6b6580]">WAV, MP3, M4A, OGG, FLAC, WebM</p></>)}
                 <input ref={asrFileRef} type="file" accept=".wav,.m4a,.mp3,.ogg,.flac,.webm,audio/*" className="hidden"
-                  onChange={(e) => { const f = e.target.files?.[0]; if (f) { setAsrFile(f); setAsrStatus({ status: "idle", message: "" }); setTranscript(null); } e.target.value = ""; }} />
+                  onChange={(e) => { const f = e.target.files?.[0]; if (f) { setAsrFile(f); setSelectedExistingFile(null); setAsrStatus({ status: "idle", message: "" }); setTranscript(null); } e.target.value = ""; }} />
               </div>
             </section>
             <section className="card">
               <h2 className="mb-4 text-lg font-semibold">설정</h2>
               <div><label className="label">화자 수</label><select className="input-field cursor-pointer" value={numSpeakers} onChange={(e) => setNumSpeakers(Number(e.target.value))}>{[1,2,3,4,5].map((n) => <option key={n} value={n}>{n}명</option>)}</select></div>
-              <button className="btn-primary mt-6 w-full text-lg" disabled={!asrFile || isTranscribing} onClick={transcribe}>
+              <button className="btn-primary mt-6 w-full text-lg" disabled={!hasAsrInput || isTranscribing} onClick={transcribe}>
                 {isTranscribing ? <><Spinner /> 처리 중...</> : <><MicIcon /> 음성 인식 시작</>}
               </button>
             </section>
@@ -1701,7 +2635,9 @@ export default function Home() {
             {transcript && asrStatus.status === "complete" && (
               <section className="card">
                 <div className="mb-4 flex items-center justify-between"><h2 className="text-lg font-semibold">인식 결과</h2>
-                  <div className="flex gap-2"><button className="btn-secondary text-xs" onClick={copyTranscript}>{copied ? <><CheckIcon /> 복사됨</> : <><CopyIcon /> 복사</>}</button>
+                  <div className="flex gap-2">
+                    <button className="btn-primary text-xs" disabled={asrSaving} onClick={saveTranscript}>{asrSaved ? <><CheckIcon /> 저장됨</> : asrSaving ? "저장 중..." : "저장"}</button>
+                    <button className="btn-secondary text-xs" onClick={copyTranscript}>{copied ? <><CheckIcon /> 복사됨</> : <><CopyIcon /> 복사</>}</button>
                     <button className="btn-secondary text-xs" onClick={downloadTranscript}><DownloadIcon /> 다운로드</button></div></div>
                 <div className="mb-4 flex gap-4 text-xs text-[#6b6580]"><span>오디오 길이: {fmtTime(transcript.duration)}</span><span>처리 시간: {transcript.processing_time.toFixed(1)}초</span></div>
                 <div className="space-y-2 max-h-[500px] overflow-y-auto pr-1">
@@ -1809,6 +2745,96 @@ export default function Home() {
             )}
           </section>
 
+          {/* Downloaded Audio Files */}
+          {srcAudioFiles.length > 0 && (
+            <section className="card">
+              <div className="mb-3 flex items-center justify-between">
+                <h2 className="text-lg font-semibold">🎧 오디오 파일 목록</h2>
+                <span className="text-xs text-[#6b6580]">{srcAudioFiles.length}개 파일 · 클릭하여 음성 클립 추출</span>
+              </div>
+              <div className="max-h-[300px] overflow-y-auto space-y-1.5">
+                {srcAudioFiles.map((af) => (
+                  <div key={af.filename} className="flex items-center rounded-lg bg-[#1e1a2e] border border-transparent hover:bg-[#2a2540] hover:border-accent-500/30 transition-colors">
+                    <button onClick={() => openClipModal(af)} className="flex-1 min-w-0 px-4 py-3 text-left">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <MicIcon />
+                          <span className="text-sm text-[#e8e4f0] truncate">{af.original_name || af.filename}</span>
+                          {af.file_type === "output" && <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-900/40 text-green-400 shrink-0">TTS</span>}
+                        </div>
+                        <div className="flex items-center gap-3 shrink-0 ml-2">
+                          <span className="text-xs text-[#6b6580]">{fmtSize(af.size)}</span>
+                          <span className="text-xs text-[#6b6580]">{fmtDate(af.created_at || af.modified || "")}</span>
+                          <span className="text-[10px] text-accent-400">편집</span>
+                        </div>
+                      </div>
+                    </button>
+                    <a href={`/api/audio-files/${encodeURIComponent(af.filename)}`} download
+                      className="shrink-0 p-3 text-[#6b6580] hover:text-accent-400 transition-colors" title="다운로드">
+                      <DownloadIcon />
+                    </a>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {/* Artifact Files */}
+          {srcArtifacts.length > 0 && (
+            <section className="card">
+              <div className="mb-3 flex items-center justify-between">
+                <h2 className="text-lg font-semibold">📄 텍스트 파일</h2>
+                <span className="text-xs text-[#6b6580]">{srcArtifacts.length}개 파일</span>
+              </div>
+              <div className="space-y-1.5">
+                {srcArtifacts.map((a) => {
+                  const isOpen = expandedArtifacts.has(a.filename);
+                  return (
+                  <div key={a.filename}>
+                    <button onClick={async () => {
+                      const next = new Set(expandedArtifacts);
+                      if (next.has(a.filename)) { next.delete(a.filename); } else {
+                        next.add(a.filename);
+                        if (!artifactContents[a.filename]) {
+                          try {
+                            const res = await fetch(`/api/artifacts/${encodeURIComponent(a.filename)}`);
+                            if (res.ok) setArtifactContents((prev) => ({ ...prev, [a.filename]: "" }));
+                            const text = await res.text();
+                            setArtifactContents((prev) => ({ ...prev, [a.filename]: text }));
+                          } catch { /* silent */ }
+                        }
+                      }
+                      setExpandedArtifacts(next);
+                    }}
+                      className="flex items-center justify-between w-full rounded-lg bg-[#1e1a2e] border border-transparent hover:bg-[#2a2540] hover:border-accent-500/30 px-4 py-3 text-left transition-colors">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className={`text-xs transition-transform ${isOpen ? "rotate-90" : ""}`}>&#9654;</span>
+                        <div className="min-w-0">
+                          <span className="text-sm text-[#e8e4f0] truncate block">{a.filename}</span>
+                          <span className="text-[10px] text-[#6b6580]">{a.label}</span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3 shrink-0 ml-2">
+                        <span className="text-xs text-[#6b6580]">{fmtSize(a.file_size)}</span>
+                        <span className="text-xs text-[#6b6580]">{fmtDate(a.created_at)}</span>
+                      </div>
+                    </button>
+                    {isOpen && (
+                      <div className="mt-1 rounded-lg bg-[#161225] border border-[#2e2845] px-4 py-3">
+                        {artifactContents[a.filename] ? (
+                          <pre className="text-sm text-[#c8c4d8] whitespace-pre-wrap max-h-[400px] overflow-y-auto leading-relaxed">{artifactContents[a.filename]}</pre>
+                        ) : (
+                          <p className="text-sm text-[#6b6580]">로딩 중...</p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  );
+                })}
+              </div>
+            </section>
+          )}
+
           {/* Raw Transcript */}
           <section className="card">
             <div className="mb-3 flex items-center justify-between">
@@ -1882,7 +2908,7 @@ export default function Home() {
                 </div>
                 <p className="mt-1 text-xs text-[#6b6580]">빠른 클라우드 TTS, 다국어 지원, ~1초 생성</p>
               </button>
-              <button onClick={() => { setTtsEngine("qwen3"); if (voices.length > 0) setSelectedVoice(voices[0].id); }}
+              <button onClick={() => { setTtsEngine("qwen3"); const pref = voices.find((v) => v.id === "upload-68582e2a-성우"); if (voices.length > 0) setSelectedVoice(pref?.id || voices[0].id); }}
                 className={`w-full rounded-lg px-4 py-3 text-left text-sm transition-colors ${ttsEngine === "qwen3" ? "bg-accent-600/30 border border-accent-500/50 text-white" : "bg-[#1e1a2e] border border-transparent hover:bg-[#2a2540] text-[#c0bcd0]"}`}>
                 <div className="flex items-center justify-between">
                   <div><span className="font-medium">Qwen3-TTS 1.7B</span><span className="ml-2 rounded px-1.5 py-0.5 text-[10px] bg-blue-500/20 text-blue-300">Local GPU</span></div>
@@ -1946,10 +2972,155 @@ export default function Home() {
                       <span className="text-sm text-[#e8e4f0] truncate">{af.filename}</span>
                       <span className="text-xs text-[#6b6580] ml-2 shrink-0">{fmtSize(af.size)}</span>
                     </div>
-                    <p className="text-[10px] text-[#6b6580] mt-0.5">{fmtDate(af.modified)}</p>
+                    <p className="text-[10px] text-[#6b6580] mt-0.5">{fmtDate(af.modified || af.created_at || "")}</p>
                   </button>
                 ))}
               </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ---- Voice Clip Editor Modal ---- */}
+      {clipModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+          <div className="card w-full max-w-3xl max-h-[90vh] overflow-y-auto space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-semibold">음성 클립 추출</h2>
+              <button className="text-[#6b6580] hover:text-white" onClick={closeClipModal}><CloseIcon /></button>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-[#a09bb5] truncate flex-1">{clipModal.filename}</span>
+              {clipDuration > 0 && <span className="text-xs text-[#6b6580] shrink-0">{fmtAudTime(clipDuration)}</span>}
+            </div>
+
+            {/* Clip history */}
+            {clipHistory.length > 0 && (
+              <div className="rounded-lg bg-[#0d0b14] border border-[#2e2845] px-3 py-2 space-y-1">
+                <p className="text-[10px] text-[#6b6580] font-medium">편집 이력</p>
+                {clipHistory.map((h, i) => (
+                  <p key={i} className="text-[11px] text-[#8a84a0] font-mono">
+                    {i + 1}. {h.from} → <span className="text-accent-400">{h.to}</span> ({fmtAudTime(h.start)}~{fmtAudTime(h.end)})
+                  </p>
+                ))}
+              </div>
+            )}
+
+            {!clipReady ? (
+              <div className="flex items-center gap-3 py-8 justify-center">
+                <Spinner /> <span className="text-sm text-[#a09bb5]">파형 로딩 중...</span>
+              </div>
+            ) : (
+              <>
+                {/* Waveform */}
+                {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions */}
+                <div className="relative rounded-lg border border-[#2e2845] overflow-hidden cursor-crosshair"
+                  onMouseDown={onClipMouseDown}>
+                  <canvas ref={clipCanvasRef} width={900} height={140} className="w-full h-36 block" />
+                </div>
+
+                {/* Time display */}
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-mono text-[#c0bcd0] tabular-nums">
+                    {fmtAudTime(clipTime)} / {fmtAudTime(clipDuration)}
+                  </span>
+                  {clipSelection && Math.abs(clipSelection[1] - clipSelection[0]) >= 0.3 && (
+                    <span className="font-mono text-purple-400 tabular-nums">
+                      선택: {fmtAudTime(Math.min(clipSelection[0], clipSelection[1]))} &ndash; {fmtAudTime(Math.max(clipSelection[0], clipSelection[1]))}
+                      {" "}({fmtAudTime(Math.abs(clipSelection[1] - clipSelection[0]))})
+                    </span>
+                  )}
+                </div>
+
+                {/* Playback controls */}
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button className="btn-secondary px-3 py-2 text-sm" onClick={() => clipSeek(-5)} title="-5초"><BwdIcon /></button>
+                  {!clipPlaying ? (
+                    <button className="btn-primary px-4 py-2 text-sm" onClick={clipPlay}><PlayIcon /> 재생</button>
+                  ) : (
+                    <button className="btn-secondary px-4 py-2 text-sm" onClick={clipPause}><PauseIcon /> 일시정지</button>
+                  )}
+                  <button className="btn-secondary px-3 py-2 text-sm" onClick={clipStop} title="정지"><AudStopIcon /></button>
+                  <button className="btn-secondary px-3 py-2 text-sm" onClick={() => clipSeek(5)} title="+5초"><FwdIcon /></button>
+                  <button className="btn-secondary px-3 py-2 text-sm" onClick={() => clipSeek(30)} title="+30초"><FwdIcon /> 30</button>
+                  <button className="btn-secondary px-3 py-2 text-sm" onClick={() => clipSeek(-30)} title="-30초">30 <BwdIcon /></button>
+                  <button className="btn-secondary px-3 py-1.5 text-xs ml-auto" onClick={() => { setClipSelection(null); clipSelRef.current = null; drawClipCanvas(); }}
+                    disabled={!clipSelection}>
+                    선택 해제
+                  </button>
+                </div>
+
+                {/* Debug Console */}
+                <div className="mt-1">
+                  <div className="mb-1 flex items-center justify-between">
+                    <span className="text-[11px] font-medium text-[#6b6580]">Debug Console</span>
+                    <button className="text-[10px] text-[#6b6580] hover:text-white" onClick={() => setClipLogs([])}>Clear</button>
+                  </div>
+                  <div ref={clipLogRef} className="h-28 overflow-y-auto rounded-lg bg-[#0d0b14] border border-[#2e2845] px-3 py-2 font-mono text-[11px] text-[#8a84a0] space-y-0.5">
+                    {clipLogs.length === 0 ? (
+                      <p className="text-[#4a4560]">작업 로그가 여기에 표시됩니다...</p>
+                    ) : clipLogs.map((log, i) => (
+                      <p key={i} className={log.includes("오류") || log.includes("실패") ? "text-red-400" : log.includes("완료") || log.includes("등록 완료") ? "text-green-400" : log.includes("넣으세요") || log.includes("선택하세요") || log.includes("짧습니다") ? "text-amber-400" : ""}>{log}</p>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Step 1: Crop & Save */}
+                <div className="border-t border-[#2e2845] pt-4 space-y-3">
+                  <div className="flex items-center gap-2">
+                    <span className="flex h-6 w-6 items-center justify-center rounded-full bg-accent-600 text-xs font-bold text-white">1</span>
+                    <h3 className="text-sm font-semibold text-[#e8e4f0]">구간 선택 &amp; 저장</h3>
+                  </div>
+                  <p className="text-xs text-[#6b6580]">파형에서 원하는 구간을 드래그로 선택하고, 파일명을 입력한 후 저장하세요. 저장 후 잘린 파일이 다시 로드되어 반복 편집할 수 있습니다.</p>
+                  <div className="flex items-center gap-3">
+                    <input type="text" className="input-field flex-1" placeholder="저장할 파일명 (예: 아버지_목소리_01)"
+                      value={clipCropName} onChange={(e) => setClipCropName(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Enter" && !clipSaving) clipSaveCrop(); }}
+                      disabled={clipSaving} />
+                    <button className="btn-primary px-5 py-2.5 shrink-0" onClick={clipSaveCrop}
+                      disabled={clipSaving}>
+                      {clipSaving ? <><Spinner small /> 저장 중...</> : <><ScissorsIcon /> 클립 저장</>}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Step 2: Register Voice */}
+                <div className="border-t border-[#2e2845] pt-4 space-y-3">
+                  <div className="flex items-center gap-2">
+                    <span className="flex h-6 w-6 items-center justify-center rounded-full bg-emerald-600 text-xs font-bold text-white">2</span>
+                    <h3 className="text-sm font-semibold text-[#e8e4f0]">음성 등록 (Qwen3-TTS)</h3>
+                  </div>
+                  <p className="text-xs text-[#6b6580]">현재 로드된 오디오가 원하는 음성 클립이면, 화자 이름을 입력하고 등록하세요. 등록된 음성은 오디오북생성 탭에서 사용할 수 있습니다.</p>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <div>
+                      <label className="label">화자 이름 *</label>
+                      <input type="text" className="input-field" placeholder="예: 아버지, 어머니, 나레이터"
+                        value={clipVoiceName} onChange={(e) => setClipVoiceName(e.target.value)} />
+                    </div>
+                    <div>
+                      <label className="label">참조 텍스트 (선택)</label>
+                      <input type="text" className="input-field" placeholder="이 오디오에서 말하는 내용"
+                        value={clipRefText} onChange={(e) => setClipRefText(e.target.value)} />
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <button className="btn-primary bg-emerald-600 hover:bg-emerald-500 px-6 py-2.5" onClick={clipRegisterVoice}
+                      disabled={clipRegistering}>
+                      {clipRegistering ? <><Spinner small /> 등록 중...</> : <><UploadIcon /> 음성 등록</>}
+                    </button>
+                    {clipSaveMsg && (
+                      <span className={`text-xs ${clipSaveMsg.includes("실패") || clipSaveMsg.includes("오류") ? "text-red-400" : clipSaveMsg.includes("완료") ? "text-green-400" : "text-[#a09bb5]"}`}>
+                        {clipSaveMsg}
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                <audio ref={clipAudioRef} src={clipModal.audioUrl} preload="metadata"
+                  onLoadedMetadata={() => { if (clipAudioRef.current && clipDuration === 0) setClipDuration(clipAudioRef.current.duration); }}
+                  onEnded={() => { cancelAnimationFrame(clipAnimRef.current); setClipPlaying(false); setClipTime(0); drawClipCanvas(); }}
+                  style={{ display: "none" }} />
+              </>
             )}
           </div>
         </div>

@@ -28,6 +28,36 @@ def get_db() -> sqlite3.Connection:
 def init_db():
     db = get_db()
     db.execute("""
+        CREATE TABLE IF NOT EXISTS project_audio_files (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id TEXT NOT NULL,
+            filename TEXT NOT NULL,
+            original_name TEXT,
+            file_size INTEGER DEFAULT 0,
+            file_type TEXT DEFAULT 'source',
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+        )
+    """)
+    db.execute("""
+        CREATE INDEX IF NOT EXISTS idx_paf_project ON project_audio_files(project_id)
+    """)
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS project_artifacts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id TEXT NOT NULL,
+            filename TEXT NOT NULL,
+            label TEXT NOT NULL,
+            artifact_type TEXT NOT NULL DEFAULT 'text',
+            file_size INTEGER DEFAULT 0,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+        )
+    """)
+    db.execute("""
+        CREATE INDEX IF NOT EXISTS idx_pa_project ON project_artifacts(project_id)
+    """)
+    db.execute("""
         CREATE TABLE IF NOT EXISTS projects (
             id TEXT PRIMARY KEY,
             name TEXT NOT NULL,
@@ -59,6 +89,7 @@ def init_db():
             rewrite_output_tokens INTEGER DEFAULT 0,
             rewrite_elapsed REAL DEFAULT 0,
             rewrite_cost REAL DEFAULT 0,
+            tts_text TEXT,
             tts_engine TEXT,
             tts_model TEXT,
             tts_text_chars INTEGER DEFAULT 0,
@@ -71,7 +102,15 @@ def init_db():
     db.commit()
 
 
+def _migrate_paf(db: sqlite3.Connection):
+    cursor = db.execute("PRAGMA table_info(project_audio_files)")
+    existing = {row[1] for row in cursor.fetchall()}
+    if "file_type" not in existing:
+        db.execute("ALTER TABLE project_audio_files ADD COLUMN file_type TEXT DEFAULT 'source'")
+
+
 def _migrate(db: sqlite3.Connection):
+    _migrate_paf(db)
     cursor = db.execute("PRAGMA table_info(projects)")
     existing = {row[1] for row in cursor.fetchall()}
     new_cols = [
@@ -91,6 +130,7 @@ def _migrate(db: sqlite3.Connection):
         ("rewrite_elapsed", "REAL DEFAULT 0"),
         ("rewrite_cost", "REAL DEFAULT 0"),
         ("generated_audio_duration", "REAL DEFAULT 0"),
+        ("tts_text", "TEXT"),
         ("tts_engine", "TEXT"),
         ("tts_model", "TEXT"),
         ("tts_text_chars", "INTEGER DEFAULT 0"),
@@ -134,7 +174,7 @@ _ALLOWED_FIELDS = {
     "asr_model", "asr_elapsed", "asr_audio_duration", "asr_cost",
     "fix_typos_model", "fix_typos_input_tokens", "fix_typos_output_tokens", "fix_typos_elapsed", "fix_typos_cost",
     "rewrite_model", "rewrite_input_tokens", "rewrite_output_tokens", "rewrite_elapsed", "rewrite_cost",
-    "tts_engine", "tts_model", "tts_text_chars", "tts_elapsed", "tts_cost",
+    "tts_text", "tts_engine", "tts_model", "tts_text_chars", "tts_elapsed", "tts_cost",
     "total_cost",
 }
 
@@ -153,6 +193,67 @@ def update_project(project_id: str, **fields) -> dict | None:
 
 def delete_project(project_id: str) -> bool:
     db = get_db()
+    db.execute("DELETE FROM project_audio_files WHERE project_id = ?", (project_id,))
+    db.execute("DELETE FROM project_artifacts WHERE project_id = ?", (project_id,))
     cursor = db.execute("DELETE FROM projects WHERE id = ?", (project_id,))
     db.commit()
     return cursor.rowcount > 0
+
+
+def add_project_audio(project_id: str, filename: str, original_name: str = "", file_size: int = 0, file_type: str = "source"):
+    db = get_db()
+    existing = db.execute(
+        "SELECT id FROM project_audio_files WHERE project_id = ? AND filename = ?",
+        (project_id, filename),
+    ).fetchone()
+    if existing:
+        return
+    db.execute(
+        "INSERT INTO project_audio_files (project_id, filename, original_name, file_size, file_type, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+        (project_id, filename, original_name or filename, file_size, file_type, datetime.utcnow().isoformat()),
+    )
+    db.commit()
+
+
+def list_project_audio(project_id: str) -> list[dict]:
+    db = get_db()
+    rows = db.execute(
+        "SELECT filename, original_name, file_size, file_type, created_at FROM project_audio_files WHERE project_id = ? ORDER BY created_at DESC",
+        (project_id,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def upsert_project_artifact(project_id: str, filename: str, label: str, file_size: int = 0, artifact_type: str = "text"):
+    db = get_db()
+    existing = db.execute(
+        "SELECT id FROM project_artifacts WHERE project_id = ? AND filename = ?",
+        (project_id, filename),
+    ).fetchone()
+    now = datetime.utcnow().isoformat()
+    if existing:
+        db.execute(
+            "UPDATE project_artifacts SET label = ?, file_size = ?, created_at = ? WHERE id = ?",
+            (label, file_size, now, existing["id"]),
+        )
+    else:
+        db.execute(
+            "INSERT INTO project_artifacts (project_id, filename, label, artifact_type, file_size, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (project_id, filename, label, artifact_type, file_size, now),
+        )
+    db.commit()
+
+
+def list_project_artifacts(project_id: str) -> list[dict]:
+    db = get_db()
+    rows = db.execute(
+        "SELECT filename, label, artifact_type, file_size, created_at FROM project_artifacts WHERE project_id = ? ORDER BY created_at DESC",
+        (project_id,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def delete_project_artifacts(project_id: str):
+    db = get_db()
+    db.execute("DELETE FROM project_artifacts WHERE project_id = ?", (project_id,))
+    db.commit()

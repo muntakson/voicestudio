@@ -11,6 +11,9 @@ class GenerateRequest(BaseModel):
     seed: Optional[int] = Field(default=None, description="Random seed for reproducibility")
     engine: str = Field(default="elevenlabs", description="TTS engine: 'qwen3' or 'elevenlabs'")
     output_name: Optional[str] = Field(default=None, description="Human-readable prefix for output filename")
+    voice_name: Optional[str] = Field(default=None, description="Human-readable voice name for output filename")
+    project_id: Optional[str] = Field(default=None, description="Associate generated audio with a project")
+    postprocess: bool = Field(default=False, description="Apply audio post-processing (compression, normalization) for Qwen3")
 
 
 class VoiceInfo(BaseModel):
@@ -34,6 +37,12 @@ class HealthResponse(BaseModel):
 class RewriteRequest(BaseModel):
     text: str = Field(..., description="Text to rewrite")
     model: str = Field(default="claude-sonnet-4-6", description="LLM model ID")
+
+
+class AudioDownloadRequest(BaseModel):
+    url: str = Field(..., description="URL to download audio from (YouTube, etc.)")
+    filename: Optional[str] = Field(default=None, description="Custom output filename (without extension)")
+    project_id: Optional[str] = Field(default=None, description="Associate download with a project")
 
 
 class ProjectCreate(BaseModel):
@@ -65,6 +74,7 @@ class ProjectUpdate(BaseModel):
     rewrite_output_tokens: Optional[int] = None
     rewrite_elapsed: Optional[float] = None
     rewrite_cost: Optional[float] = None
+    tts_text: Optional[str] = None
     tts_engine: Optional[str] = None
     tts_model: Optional[str] = None
     tts_text_chars: Optional[int] = None

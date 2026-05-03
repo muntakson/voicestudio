@@ -5,6 +5,7 @@ import os
 import threading
 import time
 import uuid
+from datetime import datetime
 from typing import Optional
 
 import requests
@@ -89,9 +90,9 @@ class ElevenLabsService:
 
         return voices
 
-    def generate(self, text: str, voice_id: str, output_name: Optional[str] = None) -> dict:
+    def generate(self, text: str, voice_id: str, output_name: Optional[str] = None, voice_name: Optional[str] = None) -> dict:
         with self._lock:
-            return self._generate_locked(text, voice_id, output_name)
+            return self._generate_locked(text, voice_id, output_name, voice_name)
 
     @staticmethod
     def _sanitize_filename(name: str) -> str:
@@ -100,7 +101,7 @@ class ElevenLabsService:
         name = re.sub(r'\s+', '_', name)
         return name[:80] if name else ""
 
-    def _generate_locked(self, text: str, voice_id: str, output_name: Optional[str] = None) -> dict:
+    def _generate_locked(self, text: str, voice_id: str, output_name: Optional[str] = None, voice_name: Optional[str] = None) -> dict:
         el_voice_id = voice_id.removeprefix("el_")
 
         start_time = time.time()
@@ -125,15 +126,14 @@ class ElevenLabsService:
         generation_time = time.time() - start_time
 
         os.makedirs(OUTPUTS_DIR, exist_ok=True)
-        prefix = self._sanitize_filename(output_name) if output_name else ""
-        if prefix:
-            output_filename = f"{prefix}_generated.mp3"
-            output_path = os.path.join(OUTPUTS_DIR, output_filename)
-            if os.path.exists(output_path):
-                output_filename = f"{prefix}_generated_{uuid.uuid4().hex[:6]}.mp3"
-                output_path = os.path.join(OUTPUTS_DIR, output_filename)
-        else:
-            output_filename = f"{uuid.uuid4().hex[:8]}.mp3"
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M")
+        project_part = self._sanitize_filename(output_name) if output_name else ""
+        voice_part = self._sanitize_filename(voice_name) if voice_name else ""
+        parts = [p for p in [project_part, voice_part, "elevenlabs", timestamp] if p]
+        output_filename = "_".join(parts) + ".mp3"
+        output_path = os.path.join(OUTPUTS_DIR, output_filename)
+        if os.path.exists(output_path):
+            output_filename = "_".join(parts + [uuid.uuid4().hex[:4]]) + ".mp3"
             output_path = os.path.join(OUTPUTS_DIR, output_filename)
         with open(output_path, "wb") as f:
             f.write(resp.content)

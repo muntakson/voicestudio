@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import os
+import queue
 import shutil
 import subprocess
 import tempfile
@@ -22,11 +23,13 @@ from fastapi.staticfiles import StaticFiles
 from app.asr_service import asr_service
 from app.database import (
     init_db, list_projects, get_project, create_project,
-    update_project, delete_project, AUDIO_FILES_DIR, ARTIFACTS_DIR,
+    update_project, delete_project, add_project_audio,
+    list_project_audio, upsert_project_artifact, list_project_artifacts,
+    AUDIO_FILES_DIR, ARTIFACTS_DIR,
 )
 from app.models import (
-    GenerateRequest, HealthResponse, ProjectCreate, ProjectUpdate,
-    RewriteRequest, VoiceInfo, VoiceListResponse,
+    AudioDownloadRequest, GenerateRequest, HealthResponse, ProjectCreate,
+    ProjectUpdate, RewriteRequest, VoiceInfo, VoiceListResponse,
 )
 from app.elevenlabs_service import elevenlabs_service
 from app.tts_service import tts_service, OUTPUTS_DIR, UPLOADS_DIR, ALLOWED_AUDIO_EXTENSIONS
@@ -134,12 +137,16 @@ async def generate_audio(req: GenerateRequest):
                 loop = asyncio.get_event_loop()
                 result = await loop.run_in_executor(
                     None,
-                    lambda: elevenlabs_service.generate(text=req.text, voice_id=voice_id, output_name=req.output_name),
+                    lambda: elevenlabs_service.generate(text=req.text, voice_id=voice_id, output_name=req.output_name, voice_name=req.voice_name),
                 )
-                media = "audio/mpeg" if result["output_filename"].endswith(".mp3") else "audio/wav"
+                out_fname = result["output_filename"]
+                if req.project_id:
+                    out_path = os.path.join(OUTPUTS_DIR, out_fname)
+                    fsize = os.path.getsize(out_path) if os.path.isfile(out_path) else 0
+                    add_project_audio(req.project_id, out_fname, out_fname, fsize, "output")
                 yield _sse({
                     "status": "complete",
-                    "audio_url": f"/api/outputs/{result['output_filename']}",
+                    "audio_url": f"/api/outputs/{out_fname}",
                     "duration": result["duration"],
                     "generation_time": result["generation_time"],
                     "engine": "elevenlabs",
@@ -149,24 +156,57 @@ async def generate_audio(req: GenerateRequest):
                 if not tts_service.is_loaded:
                     yield _sse({"status": "error", "message": "Model is not loaded yet"})
                     return
-                yield _sse({"status": "loading", "message": "Preparing voice clone..."})
+                import torch as _torch
+                gpu_name = _torch.cuda.get_device_name(0) if _torch.cuda.is_available() else "CPU"
+                alloc_mb = round(_torch.cuda.memory_allocated() / 1024 / 1024, 1) if _torch.cuda.is_available() else 0
+                yield _sse({"status": "loading", "message": f"Preparing voice clone... (GPU: {gpu_name}, VRAM: {alloc_mb}MB)"})
                 try:
                     tts_service.resolve_voice(req.voice_id)
                 except FileNotFoundError as exc:
                     yield _sse({"status": "error", "message": str(exc)})
                     return
+                progress_q: queue.Queue = queue.Queue()
+
+                def on_chunk_progress(idx, total, preview):
+                    progress_q.put((idx, total, preview))
+
                 yield _sse({"status": "generating", "message": "Generating audio..."})
                 loop = asyncio.get_event_loop()
-                result = await loop.run_in_executor(
+                gen_future = loop.run_in_executor(
                     None,
-                    lambda: tts_service.generate(text=req.text, voice_id=req.voice_id, language=req.language, seed=req.seed, output_name=req.output_name),
+                    lambda: tts_service.generate(
+                        text=req.text, voice_id=req.voice_id, language=req.language,
+                        seed=req.seed, output_name=req.output_name, voice_name=req.voice_name,
+                        on_progress=on_chunk_progress, postprocess=req.postprocess,
+                    ),
                 )
+                elapsed = 0
+                while not gen_future.done():
+                    try:
+                        await asyncio.wait_for(asyncio.shield(gen_future), timeout=15)
+                    except asyncio.TimeoutError:
+                        elapsed += 15
+                        while not progress_q.empty():
+                            idx, total, preview = progress_q.get_nowait()
+                            yield _sse({"status": "generating", "message": f"Chunk {idx}/{total}: {preview}..."})
+                        yield _sse({"status": "generating", "message": f"Generating audio... ({elapsed}s)"})
+                result = gen_future.result()
+                out_fname = result["output_filename"]
+                if req.project_id:
+                    out_path = os.path.join(OUTPUTS_DIR, out_fname)
+                    fsize = os.path.getsize(out_path) if os.path.isfile(out_path) else 0
+                    add_project_audio(req.project_id, out_fname, out_fname, fsize, "output")
                 yield _sse({
                     "status": "complete",
-                    "audio_url": f"/api/outputs/{result['output_filename']}",
+                    "audio_url": f"/api/outputs/{out_fname}",
                     "duration": result["duration"],
                     "generation_time": result["generation_time"],
                     "engine": "qwen3",
+                    "text_chars": len(req.text),
+                    "num_chunks": result.get("num_chunks", 1),
+                    "rtf": result.get("rtf"),
+                    "gpu_peak_mb": result.get("gpu_peak_mb"),
+                    "gpu_util_pct": result.get("gpu_util_pct"),
                 })
         except Exception as exc:
             logger.error("Generation failed: %s", exc, exc_info=True)
@@ -226,9 +266,28 @@ async def transcribe_audio(
                 loop = asyncio.get_event_loop()
                 await loop.run_in_executor(None, asr_service.load_models)
             yield _sse({"status": "transcribing", "message": "음성을 인식하고 화자를 구분하는 중..."})
+
+            progress_q: queue.Queue = queue.Queue()
+            def on_progress(msg: str):
+                progress_q.put(msg)
+
             loop = asyncio.get_event_loop()
-            result = await loop.run_in_executor(
-                None, lambda: asr_service.transcribe(src_path, wav_path, num_speakers=num_speakers))
+            transcribe_future = loop.run_in_executor(
+                None, lambda: asr_service.transcribe(src_path, wav_path, num_speakers=num_speakers, on_progress=on_progress))
+
+            while not transcribe_future.done():
+                try:
+                    await asyncio.wait_for(asyncio.shield(transcribe_future), timeout=3)
+                except asyncio.TimeoutError:
+                    while not progress_q.empty():
+                        msg = progress_q.get_nowait()
+                        yield _sse({"status": "transcribing", "message": msg})
+
+            while not progress_q.empty():
+                msg = progress_q.get_nowait()
+                yield _sse({"status": "transcribing", "message": msg})
+
+            result = transcribe_future.result()
             yield _sse({"status": "complete", **result})
         except Exception as exc:
             logger.error("Transcription failed: %s", exc, exc_info=True)
@@ -266,6 +325,13 @@ async def api_get_project(project_id: str):
     return proj
 
 
+def _artifact_base(proj: dict) -> str:
+    src = proj.get("source_audio_original_name") or proj.get("source_audio_filename") or ""
+    if src:
+        return os.path.splitext(src)[0]
+    return proj.get("name") or proj["id"]
+
+
 @app.patch("/api/projects/{project_id}")
 async def api_update_project(project_id: str, req: ProjectUpdate):
     proj = get_project(project_id)
@@ -273,14 +339,31 @@ async def api_update_project(project_id: str, req: ProjectUpdate):
         raise HTTPException(status_code=404, detail="Project not found")
     fields = {k: v for k, v in req.model_dump().items() if v is not None}
     updated = update_project(project_id, **fields)
+    base = _artifact_base(updated or proj)
     if "transcript_text" in fields:
-        edited_path = os.path.join(ARTIFACTS_DIR, f"{project_id}_edited.txt")
-        with open(edited_path, "w", encoding="utf-8") as f:
-            f.write(fields["transcript_text"])
+        fname = f"{base}_groq_whisper.txt"
+        fpath = os.path.join(ARTIFACTS_DIR, fname)
+        content = fields["transcript_text"]
+        with open(fpath, "w", encoding="utf-8") as f:
+            f.write(content)
+        if content.strip():
+            upsert_project_artifact(project_id, fname, "음성인식 원본 (ASR)", len(content.encode("utf-8")))
+    if "edited_transcript" in fields:
+        fname = f"{base}_edited.txt"
+        fpath = os.path.join(ARTIFACTS_DIR, fname)
+        content = fields["edited_transcript"]
+        with open(fpath, "w", encoding="utf-8") as f:
+            f.write(content)
+        if content.strip():
+            upsert_project_artifact(project_id, fname, "편집된 녹취록", len(content.encode("utf-8")))
     if "rewritten_text" in fields:
-        rewritten_path = os.path.join(ARTIFACTS_DIR, f"{project_id}_rewritten.txt")
-        with open(rewritten_path, "w", encoding="utf-8") as f:
-            f.write(fields["rewritten_text"])
+        fname = f"{base}_rewritten.txt"
+        fpath = os.path.join(ARTIFACTS_DIR, fname)
+        content = fields["rewritten_text"]
+        with open(fpath, "w", encoding="utf-8") as f:
+            f.write(content)
+        if content.strip():
+            upsert_project_artifact(project_id, fname, "LLM 변환 텍스트", len(content.encode("utf-8")))
     return updated
 
 
@@ -295,6 +378,10 @@ async def api_delete_project(project_id: str):
             os.remove(audio_path)
     for suffix in ("_transcript.txt", "_edited.txt", "_rewritten.txt"):
         p = os.path.join(ARTIFACTS_DIR, f"{project_id}{suffix}")
+        if os.path.isfile(p):
+            os.remove(p)
+    for art in list_project_artifacts(project_id):
+        p = os.path.join(ARTIFACTS_DIR, art["filename"])
         if os.path.isfile(p):
             os.remove(p)
     delete_project(project_id)
@@ -336,8 +423,39 @@ async def api_project_upload_audio(
         source_audio_size=len(contents),
         status="uploaded",
     )
+    add_project_audio(project_id, save_name, save_name, len(contents))
     logger.info("Saved recording '%s' for project %s (%d bytes)", save_name, project_id, len(contents))
     return {"ok": True, "filename": save_name, "size": len(contents)}
+
+
+# ---------------------------------------------------------------------------
+# Project Audio Files
+# ---------------------------------------------------------------------------
+
+@app.get("/api/projects/{project_id}/audio-files")
+async def api_project_audio_files(project_id: str):
+    proj = get_project(project_id)
+    if not proj:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return list_project_audio(project_id)
+
+
+@app.get("/api/projects/{project_id}/artifacts")
+async def api_project_artifacts(project_id: str):
+    proj = get_project(project_id)
+    if not proj:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return list_project_artifacts(project_id)
+
+
+@app.get("/api/artifacts/{filename}")
+async def api_get_artifact(filename: str):
+    if "/" in filename or "\\" in filename or ".." in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    path = os.path.join(ARTIFACTS_DIR, filename)
+    if not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    return FileResponse(path, filename=filename)
 
 
 # ---------------------------------------------------------------------------
@@ -362,14 +480,307 @@ async def api_list_audio_files():
     return files
 
 
+def _resolve_audio_path(filename: str) -> str:
+    """Find audio file in audio_files/ or outputs/ directory."""
+    path = os.path.join(AUDIO_FILES_DIR, filename)
+    if os.path.isfile(path):
+        return path
+    path = os.path.join(OUTPUTS_DIR, filename)
+    if os.path.isfile(path):
+        return path
+    return ""
+
+
 @app.get("/api/audio-files/{filename}")
 async def api_get_audio_file(filename: str):
     if "/" in filename or "\\" in filename or ".." in filename:
         raise HTTPException(status_code=400, detail="Invalid filename")
-    path = os.path.join(AUDIO_FILES_DIR, filename)
-    if not os.path.isfile(path):
+    path = _resolve_audio_path(filename)
+    if not path:
         raise HTTPException(status_code=404, detail="File not found")
     return FileResponse(path, filename=filename)
+
+
+# ---------------------------------------------------------------------------
+# Audio Waveform Peaks (server-side decoding for large files)
+# ---------------------------------------------------------------------------
+
+@app.get("/api/audio-peaks/{filename}")
+async def api_audio_peaks(filename: str, num_peaks: int = 500):
+    if "/" in filename or "\\" in filename or ".." in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    path = _resolve_audio_path(filename)
+    if not path:
+        raise HTTPException(status_code=404, detail="File not found")
+
+    num_peaks = max(100, min(num_peaks, 2000))
+
+    def compute():
+        import soundfile as sf
+        import numpy as np
+        info = sf.info(path)
+        duration = info.duration
+        sample_rate = info.samplerate
+        total_frames = info.frames
+
+        block_size = max(1, total_frames // num_peaks)
+        peaks = []
+        with sf.SoundFile(path) as f:
+            for _ in range(num_peaks):
+                data = f.read(block_size)
+                if len(data) == 0:
+                    break
+                if data.ndim > 1:
+                    data = data[:, 0]
+                peaks.append(float(np.max(np.abs(data))))
+
+        return {"peaks": peaks, "duration": duration, "sample_rate": sample_rate}
+
+    loop = asyncio.get_event_loop()
+    try:
+        result = await loop.run_in_executor(None, compute)
+        return result
+    except Exception as exc:
+        # If soundfile can't read the format directly, convert via ffmpeg first
+        logger.warning("soundfile failed for %s, trying ffmpeg: %s", filename, exc)
+        wav_tmp = os.path.join(tempfile.mkdtemp(), "decoded.wav")
+        try:
+            proc = subprocess.run(
+                ["ffmpeg", "-y", "-i", path, "-ar", "22050", "-ac", "1", "-f", "wav", wav_tmp],
+                capture_output=True, timeout=300,
+            )
+            if proc.returncode != 0:
+                raise HTTPException(status_code=500, detail="Failed to decode audio")
+
+            def compute_wav():
+                import soundfile as sf
+                import numpy as np
+                info = sf.info(wav_tmp)
+                block_size = max(1, info.frames // num_peaks)
+                peaks = []
+                with sf.SoundFile(wav_tmp) as f:
+                    for _ in range(num_peaks):
+                        data = f.read(block_size)
+                        if len(data) == 0:
+                            break
+                        if data.ndim > 1:
+                            data = data[:, 0]
+                        peaks.append(float(np.max(np.abs(data))))
+                return {"peaks": peaks, "duration": info.duration, "sample_rate": info.samplerate}
+
+            result = await loop.run_in_executor(None, compute_wav)
+            return result
+        finally:
+            shutil.rmtree(os.path.dirname(wav_tmp), ignore_errors=True)
+
+
+# ---------------------------------------------------------------------------
+# Audio Clip (server-side trim via ffmpeg)
+# ---------------------------------------------------------------------------
+
+@app.post("/api/audio-clip")
+async def api_audio_clip(
+    source: str = fastapi.Form(...),
+    start: float = fastapi.Form(...),
+    end: float = fastapi.Form(...),
+    output_name: str = fastapi.Form(...),
+    project_id: str = fastapi.Form(""),
+):
+    if "/" in source or "\\" in source or ".." in source:
+        raise HTTPException(status_code=400, detail="Invalid source filename")
+    src_path = os.path.join(AUDIO_FILES_DIR, source)
+    if not os.path.isfile(src_path):
+        raise HTTPException(status_code=404, detail="Source file not found")
+
+    if end <= start or start < 0:
+        raise HTTPException(status_code=400, detail="Invalid time range")
+
+    safe_name = output_name.strip().replace("/", "").replace("\\", "").replace("..", "")
+    if not safe_name:
+        safe_name = "clip.wav"
+    if not safe_name.endswith((".wav", ".mp3")):
+        safe_name += ".wav"
+
+    out_path = os.path.join(AUDIO_FILES_DIR, safe_name)
+    counter = 1
+    base, ext = os.path.splitext(safe_name)
+    while os.path.exists(out_path):
+        out_path = os.path.join(AUDIO_FILES_DIR, f"{base}_{counter}{ext}")
+        counter += 1
+
+    final_name = os.path.basename(out_path)
+    duration = end - start
+
+    def do_clip():
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", src_path,
+            "-ss", str(start),
+            "-t", str(duration),
+            "-ar", "44100", "-ac", "1",
+            out_path,
+        ]
+        proc = subprocess.run(cmd, capture_output=True, timeout=300)
+        if proc.returncode != 0:
+            raise RuntimeError(f"ffmpeg failed: {proc.stderr.decode()[:200]}")
+
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, do_clip)
+
+    file_size = os.path.getsize(out_path)
+    if project_id:
+        add_project_audio(project_id, final_name, final_name, file_size)
+    logger.info("Clipped %s [%.1f-%.1f] -> %s (%d bytes)", source, start, end, final_name, file_size)
+    return {
+        "ok": True,
+        "filename": final_name,
+        "size": file_size,
+        "duration": duration,
+        "audio_url": f"/api/audio-files/{final_name}",
+    }
+
+
+# ---------------------------------------------------------------------------
+# Audio Download (yt-dlp)
+# ---------------------------------------------------------------------------
+
+@app.post("/api/download-audio")
+async def api_download_audio(req: AudioDownloadRequest):
+    import re
+    import yt_dlp
+
+    url = req.url.strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="URL is required")
+
+    custom_name = req.filename.strip() if req.filename else None
+
+    async def event_stream() -> AsyncGenerator[str, None]:
+        try:
+            yield _sse({"status": "starting", "message": f"URL 분석 중: {url}"})
+
+            info_result: dict = {}
+
+            def extract_info():
+                with yt_dlp.YoutubeDL({"quiet": True, "no_warnings": True, "js_runtimes": {"node": {}}}) as ydl:
+                    info = ydl.extract_info(url, download=False)
+                    info_result["title"] = info.get("title", "audio")
+                    info_result["duration"] = info.get("duration")
+                    info_result["uploader"] = info.get("uploader", "")
+
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, extract_info)
+
+            title = info_result.get("title", "audio")
+            duration = info_result.get("duration")
+            dur_str = fmtDuration(duration) if duration else "알 수 없음"
+            yield _sse({
+                "status": "info",
+                "message": f"제목: {title} | 길이: {dur_str}",
+                "title": title,
+                "duration": duration,
+            })
+
+            safe_title = re.sub(r'[^\w\s가-힯ᄀ-ᇿ.-]', '', custom_name or title).strip()
+            if not safe_title:
+                safe_title = "download"
+            safe_title = safe_title[:100]
+            out_path = os.path.join(AUDIO_FILES_DIR, f"{safe_title}.mp3")
+
+            counter = 1
+            while os.path.exists(out_path):
+                out_path = os.path.join(AUDIO_FILES_DIR, f"{safe_title}_{counter}.mp3")
+                counter += 1
+
+            progress_messages: queue.Queue = queue.Queue()
+
+            def progress_hook(d):
+                if d["status"] == "downloading":
+                    pct = d.get("_percent_str", "?%").strip()
+                    speed = d.get("_speed_str", "").strip()
+                    eta = d.get("_eta_str", "").strip()
+                    progress_messages.put(f"다운로드 중: {pct} (속도: {speed}, 남은시간: {eta})")
+                elif d["status"] == "finished":
+                    progress_messages.put("다운로드 완료, MP3 변환 중...")
+
+            def do_download():
+                ydl_opts = {
+                    "format": "bestaudio/best",
+                    "outtmpl": out_path.replace(".mp3", ".%(ext)s"),
+                    "postprocessors": [{
+                        "key": "FFmpegExtractAudio",
+                        "preferredcodec": "mp3",
+                        "preferredquality": "192",
+                    }],
+                    "progress_hooks": [progress_hook],
+                    "quiet": True,
+                    "no_warnings": True,
+                    "js_runtimes": {"node": {}},
+                }
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    ydl.download([url])
+
+            yield _sse({"status": "downloading", "message": "다운로드 시작..."})
+
+            dl_future = loop.run_in_executor(None, do_download)
+            while not dl_future.done():
+                try:
+                    await asyncio.wait_for(asyncio.shield(dl_future), timeout=2)
+                except asyncio.TimeoutError:
+                    while not progress_messages.empty():
+                        msg = progress_messages.get_nowait()
+                        yield _sse({"status": "downloading", "message": msg})
+
+            dl_future.result()
+
+            while not progress_messages.empty():
+                msg = progress_messages.get_nowait()
+                yield _sse({"status": "downloading", "message": msg})
+
+            final_path = out_path
+            if not os.path.exists(final_path):
+                for f in os.listdir(AUDIO_FILES_DIR):
+                    base = os.path.basename(out_path).replace(".mp3", "")
+                    if f.startswith(base) and f.endswith(".mp3"):
+                        final_path = os.path.join(AUDIO_FILES_DIR, f)
+                        break
+
+            if not os.path.exists(final_path):
+                yield _sse({"status": "error", "message": "다운로드된 파일을 찾을 수 없습니다"})
+                return
+
+            file_size = os.path.getsize(final_path)
+            filename = os.path.basename(final_path)
+
+            if req.project_id:
+                add_project_audio(req.project_id, filename, title or filename, file_size)
+
+            yield _sse({
+                "status": "complete",
+                "message": f"완료! {filename} ({file_size / 1024 / 1024:.1f} MB)",
+                "filename": filename,
+                "file_size": file_size,
+                "audio_url": f"/api/audio-files/{filename}",
+                "title": title,
+                "duration": duration,
+            })
+
+        except Exception as exc:
+            logger.error("Audio download failed: %s", exc, exc_info=True)
+            yield _sse({"status": "error", "message": str(exc)})
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"})
+
+
+def fmtDuration(sec):
+    if not sec:
+        return "-"
+    m = int(sec) // 60
+    s = int(sec) % 60
+    if m == 0:
+        return f"{s}초"
+    return f"{m}분 {s}초"
 
 
 # ---------------------------------------------------------------------------
@@ -407,6 +818,7 @@ async def api_project_transcribe(
                        source_audio_size=len(contents),
                        num_speakers=num_speakers,
                        status="uploaded")
+        add_project_audio(project_id, safe_name, file.filename, len(contents))
         src_path = save_path
     elif existing_file:
         if "/" in existing_file or "\\" in existing_file or ".." in existing_file:
@@ -421,6 +833,7 @@ async def api_project_transcribe(
                        source_audio_size=fsize,
                        num_speakers=num_speakers,
                        status="uploaded")
+        add_project_audio(project_id, existing_file, existing_file, fsize)
     else:
         raise HTTPException(status_code=400, detail="No audio file provided")
 
@@ -439,9 +852,28 @@ async def api_project_transcribe(
                 loop = asyncio.get_event_loop()
                 await loop.run_in_executor(None, asr_service.load_models)
             yield _sse({"status": "transcribing", "message": "음성을 인식하고 화자를 구분하는 중..."})
+
+            progress_q: queue.Queue = queue.Queue()
+            def on_progress(msg: str):
+                progress_q.put(msg)
+
             loop = asyncio.get_event_loop()
-            result = await loop.run_in_executor(
-                None, lambda: asr_service.transcribe(src_path, wav_path, num_speakers=num_speakers))
+            transcribe_future = loop.run_in_executor(
+                None, lambda: asr_service.transcribe(src_path, wav_path, num_speakers=num_speakers, on_progress=on_progress))
+
+            while not transcribe_future.done():
+                try:
+                    await asyncio.wait_for(asyncio.shield(transcribe_future), timeout=3)
+                except asyncio.TimeoutError:
+                    while not progress_q.empty():
+                        msg = progress_q.get_nowait()
+                        yield _sse({"status": "transcribing", "message": msg})
+
+            while not progress_q.empty():
+                msg = progress_q.get_nowait()
+                yield _sse({"status": "transcribing", "message": msg})
+
+            result = transcribe_future.result()
 
             update_project(project_id,
                            transcript_json=json.dumps(result, ensure_ascii=False),
@@ -452,9 +884,13 @@ async def api_project_transcribe(
                            asr_cost=0.0,
                            status="transcribed")
 
-            artifact_path = os.path.join(ARTIFACTS_DIR, f"{project_id}_transcript.txt")
+            base = _artifact_base(get_project(project_id) or proj)
+            artifact_name = f"{base}_groq_whisper.txt"
+            artifact_path = os.path.join(ARTIFACTS_DIR, artifact_name)
+            text_content = result.get("full_text", "")
             with open(artifact_path, "w", encoding="utf-8") as af:
-                af.write(result.get("full_text", ""))
+                af.write(text_content)
+            upsert_project_artifact(project_id, artifact_name, "음성인식 원본 (ASR)", len(text_content.encode("utf-8")))
 
             yield _sse({"status": "complete", **result})
         except Exception as exc:
@@ -578,6 +1014,102 @@ async def rewrite_text(req: RewriteRequest):
             yield _sse({"status": "error", "message": str(exc)})
     return StreamingResponse(event_stream(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"})
+
+
+# ---------------------------------------------------------------------------
+# Infographic Generation (Gemini 2.5 Flash)
+# ---------------------------------------------------------------------------
+
+INFOGRAPHICS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "infographics")
+os.makedirs(INFOGRAPHICS_DIR, exist_ok=True)
+
+
+class InfographicRequest(fastapi.params.Depends):
+    pass
+
+
+@app.post("/api/generate-infographic")
+async def generate_infographic(req: dict = fastapi.Body(...)):
+    prompt = req.get("prompt", "").strip()
+    project_id = req.get("project_id", "")
+    if not prompt:
+        raise HTTPException(status_code=400, detail="Prompt is required")
+
+    api_key = os.environ.get("GOOGLE_API_KEY", "")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="GOOGLE_API_KEY is not set")
+
+    async def event_stream() -> AsyncGenerator[str, None]:
+        try:
+            yield _sse({"status": "generating", "message": "Gemini 2.5 Flash로 인포그래픽 생성 중..."})
+            loop = asyncio.get_event_loop()
+
+            def _gen():
+                from google import genai
+                from google.genai import types as genai_types
+
+                client = genai.Client(api_key=api_key)
+                response = client.models.generate_content(
+                    model="gemini-2.5-flash-image",
+                    contents=prompt,
+                    config=genai_types.GenerateContentConfig(
+                        response_modalities=["IMAGE", "TEXT"],
+                    ),
+                )
+                for part in response.candidates[0].content.parts:
+                    if part.inline_data is not None:
+                        return part.inline_data.data
+                return None
+
+            t0 = time.time()
+            image_bytes = await loop.run_in_executor(None, _gen)
+            elapsed = round(time.time() - t0, 2)
+
+            if not image_bytes:
+                yield _sse({"status": "error", "message": "이미지 생성에 실패했습니다. 응답에 이미지가 없습니다."})
+                return
+
+            proj_name = ""
+            if project_id:
+                proj = get_project(project_id)
+                if proj:
+                    import re
+                    proj_name = re.sub(r'[\\/:*?"<>|]', '', proj.get("name", "")).strip()
+                    proj_name = re.sub(r'\s+', '_', proj_name)
+
+            fname = f"{proj_name}_infographic.png" if proj_name else f"infographic_{uuid.uuid4().hex[:8]}.png"
+            fpath = os.path.join(INFOGRAPHICS_DIR, fname)
+            if os.path.exists(fpath):
+                fname = f"{proj_name}_infographic_{uuid.uuid4().hex[:6]}.png" if proj_name else fname
+                fpath = os.path.join(INFOGRAPHICS_DIR, fname)
+
+            with open(fpath, "wb") as f:
+                f.write(image_bytes)
+
+            logger.info("Generated infographic '%s' in %.1fs (%d bytes)", fname, elapsed, len(image_bytes))
+            yield _sse({
+                "status": "complete",
+                "image_url": f"/api/infographics/{fname}",
+                "filename": fname,
+                "elapsed": elapsed,
+                "size": len(image_bytes),
+            })
+        except Exception as exc:
+            logger.error("Infographic generation failed: %s", exc, exc_info=True)
+            yield _sse({"status": "error", "message": str(exc)})
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"})
+
+
+@app.get("/api/infographics/{filename}")
+async def api_get_infographic(filename: str):
+    if "/" in filename or "\\" in filename or ".." in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    path = os.path.join(INFOGRAPHICS_DIR, filename)
+    if not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail="File not found")
+    return FileResponse(path, filename=filename, media_type="image/png")
 
 
 def _sse(data: dict) -> str:
