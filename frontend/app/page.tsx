@@ -307,12 +307,12 @@ export default function Home() {
   const [activeTab, setActiveTab] = useState<"recorder" | "download" | "source" | "tts" | "infographic" | "asr" | "editor" | "settings">("asr");
 
   /* TTS */
-  const [ttsEngine, setTtsEngine] = useState<"elevenlabs" | "qwen3">("elevenlabs");
+  const [ttsEngine, setTtsEngine] = useState<"elevenlabs" | "qwen3">("qwen3");
   const [text, setText] = useState("");
-  const [language, setLanguage] = useState("Auto");
+  const [language, setLanguage] = useState("Korean");
   const [voices, setVoices] = useState<Voice[]>([]);
   const [elVoices, setElVoices] = useState<Voice[]>([]);
-  const [selectedVoice, setSelectedVoice] = useState("");
+  const [selectedVoice, setSelectedVoice] = useState("upload-be0916e0-세월");
   const [seed, setSeed] = useState("100");
   const [postprocess, setPostprocess] = useState(false);
   const [gen, setGen] = useState<GenerationStatus>({ status: "idle", message: "", audioUrl: null, duration: null });
@@ -1759,7 +1759,7 @@ export default function Home() {
       });
       setVoices(list);
       if (list.length > 0) {
-        const preferred = list.find((v) => v.id === "upload-68582e2a-성우");
+        const preferred = list.find((v) => v.id === "upload-be0916e0-세월");
         setSelectedVoice((prev) => prev ? prev : (preferred?.id || list[0].id));
       }
     } catch { /* silent */ }
@@ -1772,7 +1772,7 @@ export default function Home() {
       const data = await res.json();
       const list: Voice[] = data.voices ?? [];
       setElVoices(list);
-      if (list.length > 0) setSelectedVoice((prev) => (!prev || !prev.startsWith("el_")) ? list[0].id : prev);
+      if (list.length > 0) setSelectedVoice((prev) => (!prev || prev.startsWith("el_")) ? list[0].id : prev);
     } catch { /* silent */ }
   }, []);
 
@@ -2457,11 +2457,11 @@ Batch mode: paste multiple stories with tags:
               <div className="mb-4">
                 <label className="label">TTS 엔진</label>
                 <div className="flex gap-2">
-                  <button onClick={() => { setTtsEngine("elevenlabs"); setSelectedVoice(elVoices[0]?.id || ""); }}
-                    className={`flex-1 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${ttsEngine === "elevenlabs" ? "bg-accent-600/30 border border-accent-500/50 text-white" : "bg-[#1e1a2e] border border-transparent hover:bg-[#2a2540] text-[#c0bcd0]"}`}>
-                    ElevenLabs <span className="text-[10px] text-accent-400/70">Cloud</span>
+                  <button disabled
+                    className="flex-1 rounded-lg px-3 py-2 text-sm font-medium bg-[#1e1a2e] border border-transparent text-[#6b6580] cursor-not-allowed opacity-50">
+                    ElevenLabs <span className="text-[10px]">Cloud (비활성)</span>
                   </button>
-                  <button onClick={() => { setTtsEngine("qwen3"); setLanguage("Korean"); const pref = voices.find((v) => v.id === "upload-68582e2a-성우"); setSelectedVoice(pref?.id || voices[0]?.id || ""); }}
+                  <button onClick={() => { setTtsEngine("qwen3"); setLanguage("Korean"); const pref = voices.find((v) => v.id === "upload-be0916e0-세월"); setSelectedVoice(pref?.id || voices[0]?.id || ""); }}
                     className={`flex-1 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${ttsEngine === "qwen3" ? "bg-accent-600/30 border border-accent-500/50 text-white" : "bg-[#1e1a2e] border border-transparent hover:bg-[#2a2540] text-[#c0bcd0]"}`}>
                     Qwen3-TTS <span className="text-[10px] text-accent-400/70">Local</span>
                   </button>
@@ -2488,7 +2488,6 @@ Batch mode: paste multiple stories with tags:
                   Batch 중단
                 </button>
               )}
-              {ttsEngine === "elevenlabs" && <p className="mt-2 text-xs text-[#6b6580]">ElevenLabs 클라우드 TTS (빠름, 다국어 지원)</p>}
             </section>
             {gen.status !== "idle" && (
               <section className="card">
@@ -3269,15 +3268,14 @@ Batch mode: paste multiple stories with tags:
             <h2 className="mb-4 text-lg font-semibold">TTS 엔진 설정</h2>
             <p className="mb-4 text-sm text-[#a09bb5]">오디오북 생성에 사용할 TTS 엔진을 선택하세요.</p>
             <div className="space-y-2">
-              <button onClick={() => { setTtsEngine("elevenlabs"); if (elVoices.length > 0) setSelectedVoice(elVoices[0].id); }}
-                className={`w-full rounded-lg px-4 py-3 text-left text-sm transition-colors ${ttsEngine === "elevenlabs" ? "bg-accent-600/30 border border-accent-500/50 text-white" : "bg-[#1e1a2e] border border-transparent hover:bg-[#2a2540] text-[#c0bcd0]"}`}>
+              <button disabled
+                className="w-full rounded-lg px-4 py-3 text-left text-sm bg-[#1e1a2e] border border-transparent text-[#6b6580] cursor-not-allowed opacity-50">
                 <div className="flex items-center justify-between">
-                  <div><span className="font-medium">ElevenLabs</span><span className="ml-2 rounded px-1.5 py-0.5 text-[10px] bg-emerald-500/20 text-emerald-300">Cloud</span></div>
-                  {ttsEngine === "elevenlabs" && <span className="text-xs text-accent-400">선택됨</span>}
+                  <div><span className="font-medium">ElevenLabs</span><span className="ml-2 rounded px-1.5 py-0.5 text-[10px] bg-gray-500/20 text-gray-400">비활성</span></div>
                 </div>
-                <p className="mt-1 text-xs text-[#6b6580]">빠른 클라우드 TTS, 다국어 지원, ~1초 생성</p>
+                <p className="mt-1 text-xs text-[#6b6580]">API 키 갱신 필요</p>
               </button>
-              <button onClick={() => { setTtsEngine("qwen3"); setLanguage("Korean"); const pref = voices.find((v) => v.id === "upload-68582e2a-성우"); if (voices.length > 0) setSelectedVoice(pref?.id || voices[0].id); }}
+              <button onClick={() => { setTtsEngine("qwen3"); setLanguage("Korean"); const pref = voices.find((v) => v.id === "upload-be0916e0-세월"); if (voices.length > 0) setSelectedVoice(pref?.id || voices[0].id); }}
                 className={`w-full rounded-lg px-4 py-3 text-left text-sm transition-colors ${ttsEngine === "qwen3" ? "bg-accent-600/30 border border-accent-500/50 text-white" : "bg-[#1e1a2e] border border-transparent hover:bg-[#2a2540] text-[#c0bcd0]"}`}>
                 <div className="flex items-center justify-between">
                   <div><span className="font-medium">Qwen3-TTS 1.7B</span><span className="ml-2 rounded px-1.5 py-0.5 text-[10px] bg-blue-500/20 text-blue-300">Local GPU</span></div>
