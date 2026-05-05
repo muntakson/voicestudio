@@ -188,6 +188,12 @@ Paste the following into the text box to generate 3 poem audio files at once:
 </narration>
 ```
 
+### Full Example: 한용운 시 30편 Batch
+
+The file [`한용운시_여러개.txt`](한용운시_여러개.txt) contains 30 poems by Han Yong-un (한용운) in batch narration format. Paste the entire file contents into the text box and click **Generate Speech** — Voice Studio will generate 30 separate audio files automatically, one for each poem.
+
+The batch includes: 님의 침묵, 나는 그리운데 당신은 잊었습니까, 님의 해탈에, 당신과의 거리, 님의 봄, 님의 빛, 님의 노래, 님의 침묵(2), 복종하오, 꿈, 사랑의 끝은, 비밀, 님 아닌 다른 님, 이별은 미의 창조, 인과율, 알 수 없어요, 님이여 당신은 왜, 당신에게 보내는 편지, 행복, and more.
+
 ### How it works
 
 1. Paste the tagged text into the **Text to Speak** box
