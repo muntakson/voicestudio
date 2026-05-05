@@ -29,5 +29,6 @@ backend/=*
 # OS
 .DS_Store
 
-# Env
+# Env / secrets
 .env
+backend/start.sh
