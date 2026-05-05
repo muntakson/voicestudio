@@ -1123,5 +1123,35 @@ async def api_get_infographic(filename: str):
     return FileResponse(path, filename=filename, media_type="image/png")
 
 
+POEMS_DIR = os.path.join(UPLOADS_DIR, "poems")
+
+
+@app.get("/api/poems")
+async def api_list_poems():
+    if not os.path.isdir(POEMS_DIR):
+        return {"poems": []}
+    files = sorted(f for f in os.listdir(POEMS_DIR) if f.endswith(".txt"))
+    return {"poems": [{"filename": f, "name": f.rsplit(".", 1)[0]} for f in files]}
+
+
+@app.get("/api/poems/{filename}")
+async def api_get_poem(filename: str):
+    if "/" in filename or "\\" in filename or ".." in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    path = os.path.join(POEMS_DIR, filename)
+    if not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail="File not found")
+    raw = open(path, "rb").read()
+    for enc in ("utf-8", "euc-kr", "cp949", "latin-1"):
+        try:
+            content = raw.decode(enc)
+            break
+        except (UnicodeDecodeError, LookupError):
+            continue
+    else:
+        content = raw.decode("utf-8", errors="replace")
+    return {"filename": filename, "content": content}
+
+
 def _sse(data: dict) -> str:
     return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"

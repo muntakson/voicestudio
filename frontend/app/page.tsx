@@ -333,6 +333,11 @@ export default function Home() {
   const [batchStatus, setBatchStatus] = useState<{ running: boolean; current: number; total: number; results: { title: string; status: "pending" | "generating" | "complete" | "error"; audioUrl?: string; message?: string }[] }>({ running: false, current: 0, total: 0, results: [] });
   const batchAbortRef = useRef(false);
 
+  /* Poems file picker */
+  const [poemFiles, setPoemFiles] = useState<{ filename: string; name: string }[]>([]);
+  const [showPoemPicker, setShowPoemPicker] = useState(false);
+  const [poemLoading, setPoemLoading] = useState(false);
+
   /* ASR */
   const [asrFile, setAsrFile] = useState<File | null>(null);
   const [numSpeakers, setNumSpeakers] = useState(2);
@@ -1778,6 +1783,27 @@ export default function Home() {
 
   useEffect(() => { fetchVoices(); fetchElVoices(); }, []);
 
+  const fetchPoemFiles = useCallback(async () => {
+    try {
+      const res = await fetch("/api/poems");
+      if (!res.ok) return;
+      const data = await res.json();
+      setPoemFiles(data.poems ?? []);
+    } catch { /* silent */ }
+  }, []);
+
+  const loadPoemFile = async (filename: string) => {
+    setPoemLoading(true);
+    try {
+      const res = await fetch(`/api/poems/${encodeURIComponent(filename)}`);
+      if (!res.ok) throw new Error("Failed to load");
+      const data = await res.json();
+      setText(data.content);
+      setShowPoemPicker(false);
+    } catch { /* silent */ }
+    finally { setPoemLoading(false); }
+  };
+
   const onFileSelected = (file: File) => { setUploadFile(file); setUploadName(file.name.replace(/\.[^.]+$/, "")); setUploadRefText(""); setUploadLanguage("Auto"); setShowUploadModal(true); };
 
   const submitUpload = async () => {
@@ -2434,6 +2460,10 @@ export default function Home() {
               <div className="mb-3 flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <h2 className="text-lg font-semibold">Text to Speak</h2>
+                  <button className="p-1 rounded hover:bg-[#2a2540] text-[#a09bb5] hover:text-white transition-colors" title="시 모음 불러오기"
+                    onClick={() => { fetchPoemFiles(); setShowPoemPicker(true); }}>
+                    <FileIcon />
+                  </button>
                   {ttsSaved && <span className="text-xs text-green-400">저장됨</span>}
                   {text.trim() && parseNarations(text).length > 0 && (
                     <span className="text-xs px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30">
@@ -3429,6 +3459,32 @@ Batch mode: paste multiple stories with tags:
       )}
 
       <footer className="mt-12 border-t border-[#2e2845] pt-6 text-center text-xs text-[#6b6580]">Voice Studio &mdash; Powered by ElevenLabs, Qwen3-TTS &amp; Whisper</footer>
+
+      {/* ---- Poem Picker Modal ---- */}
+      {showPoemPicker && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setShowPoemPicker(false)}>
+          <div className="card mx-4 w-full max-w-sm space-y-3" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-semibold">시 모음 선택</h2>
+              <button className="p-1 rounded hover:bg-[#2a2540] text-[#a09bb5]" onClick={() => setShowPoemPicker(false)}><CloseIcon /></button>
+            </div>
+            {poemFiles.length === 0 ? (
+              <p className="text-sm text-[#6b6580] py-4 text-center">파일이 없습니다</p>
+            ) : (
+              <div className="space-y-1.5 max-h-[400px] overflow-y-auto pr-1">
+                {poemFiles.map((p) => (
+                  <button key={p.filename} disabled={poemLoading}
+                    className="w-full rounded-lg px-4 py-3 text-left text-sm transition-colors bg-[#1e1a2e] border border-transparent hover:bg-[#2a2540] hover:border-accent-500/30 text-[#c0bcd0]"
+                    onClick={() => loadPoemFile(p.filename)}>
+                    <span className="font-medium text-white">{p.name}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+            {poemLoading && <div className="flex items-center justify-center gap-2 py-2"><Spinner small /><span className="text-sm text-[#a09bb5]">불러오는 중...</span></div>}
+          </div>
+        </div>
+      )}
 
       {/* ---- Upload Modal (TTS) ---- */}
       {showUploadModal && (
