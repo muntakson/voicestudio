@@ -313,9 +313,12 @@ export default function Home() {
   const [voices, setVoices] = useState<Voice[]>([]);
   const [elVoices, setElVoices] = useState<Voice[]>([]);
   const [selectedVoice, setSelectedVoice] = useState("");
-  const [seed, setSeed] = useState("");
+  const [seed, setSeed] = useState("100");
   const [postprocess, setPostprocess] = useState(false);
   const [gen, setGen] = useState<GenerationStatus>({ status: "idle", message: "", audioUrl: null, duration: null });
+  const [genElapsed, setGenElapsed] = useState(0);
+  const genStartRef = useRef<number>(0);
+  const genTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [uploadName, setUploadName] = useState("");
@@ -324,6 +327,11 @@ export default function Home() {
   const [uploading, setUploading] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  /* Batch narration */
+  interface NarationItem { title: string; body: string; }
+  const [batchStatus, setBatchStatus] = useState<{ running: boolean; current: number; total: number; results: { title: string; status: "pending" | "generating" | "complete" | "error"; audioUrl?: string; message?: string }[] }>({ running: false, current: 0, total: 0, results: [] });
+  const batchAbortRef = useRef(false);
 
   /* ASR */
   const [asrFile, setAsrFile] = useState<File | null>(null);
@@ -457,6 +465,25 @@ export default function Home() {
 
   /* Settings */
   const [selectedModel, setSelectedModel] = useState("claude-sonnet-4-6");
+
+  /* Voice Clone */
+  const [vcMode, setVcMode] = useState<"idle" | "recording" | "recorded" | "uploading" | "done">("idle");
+  const [vcName, setVcName] = useState("");
+  const [vcLang, setVcLang] = useState("Korean");
+  const [vcRefText, setVcRefText] = useState("");
+  const [vcElapsed, setVcElapsed] = useState(0);
+  const [vcAudioBlob, setVcAudioBlob] = useState<Blob | null>(null);
+  const [vcAudioUrl, setVcAudioUrl] = useState<string | null>(null);
+  const [vcError, setVcError] = useState("");
+  const [vcSavedVoice, setVcSavedVoice] = useState<{ id: string; name: string } | null>(null);
+  const vcRecorderRef = useRef<MediaRecorder | null>(null);
+  const vcChunksRef = useRef<Blob[]>([]);
+  const vcCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const vcAnalyserRef = useRef<AnalyserNode | null>(null);
+  const vcAudioCtxRef = useRef<AudioContext | null>(null);
+  const vcTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const vcAnimRef = useRef<number>(0);
+  const vcFileRef = useRef<HTMLInputElement | null>(null);
 
   /* ================================================================ */
   /*  Project / Landing logic                                          */
@@ -1582,6 +1609,141 @@ export default function Home() {
   };
 
   /* ================================================================ */
+  /*  Voice Clone logic                                                */
+  /* ================================================================ */
+
+  const vcStartRecording = async () => {
+    setVcError("");
+    setVcSavedVoice(null);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const audioCtx = new AudioContext();
+      const source = audioCtx.createMediaStreamSource(stream);
+      const analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 2048;
+      source.connect(analyser);
+      vcAudioCtxRef.current = audioCtx;
+      vcAnalyserRef.current = analyser;
+
+      let opts: MediaRecorderOptions = {};
+      if (typeof MediaRecorder.isTypeSupported === "function") {
+        if (MediaRecorder.isTypeSupported("audio/webm;codecs=opus")) opts = { mimeType: "audio/webm;codecs=opus" };
+        else if (MediaRecorder.isTypeSupported("audio/webm")) opts = { mimeType: "audio/webm" };
+      }
+      const recorder = new MediaRecorder(stream, opts);
+      vcChunksRef.current = [];
+      recorder.ondataavailable = (e) => { if (e.data.size > 0) vcChunksRef.current.push(e.data); };
+      vcRecorderRef.current = recorder;
+      recorder.start(100);
+      setVcMode("recording");
+      setVcElapsed(0);
+      if (vcAudioUrl) { URL.revokeObjectURL(vcAudioUrl); setVcAudioUrl(null); }
+      setVcAudioBlob(null);
+
+      const startTime = Date.now();
+      vcTimerRef.current = setInterval(() => setVcElapsed(Math.floor((Date.now() - startTime) / 1000)), 200);
+
+      const canvas = vcCanvasRef.current;
+      if (canvas) {
+        const ctx = canvas.getContext("2d");
+        const bufLen = analyser.frequencyBinCount;
+        const dataArr = new Uint8Array(bufLen);
+        const draw = () => {
+          vcAnimRef.current = requestAnimationFrame(draw);
+          analyser.getByteTimeDomainData(dataArr);
+          const w = canvas.width, h = canvas.height;
+          if (ctx) {
+            ctx.fillStyle = "#1e1a2e";
+            ctx.fillRect(0, 0, w, h);
+            ctx.strokeStyle = "#2e2845";
+            ctx.lineWidth = 1;
+            ctx.beginPath(); ctx.moveTo(0, h / 2); ctx.lineTo(w, h / 2); ctx.stroke();
+            ctx.lineWidth = 2;
+            ctx.strokeStyle = "#8b5cf6";
+            ctx.beginPath();
+            const sliceW = w / bufLen;
+            let x = 0;
+            for (let i = 0; i < bufLen; i++) {
+              const v = dataArr[i] / 128.0;
+              const y = (v * h) / 2;
+              if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+              x += sliceW;
+            }
+            ctx.lineTo(w, h / 2);
+            ctx.stroke();
+          }
+        };
+        draw();
+      }
+    } catch { setVcError("마이크 접근 권한이 필요합���다."); }
+  };
+
+  const vcStopRecording = () => {
+    const recorder = vcRecorderRef.current;
+    if (!recorder || recorder.state === "inactive") return;
+    recorder.onstop = () => {
+      if (vcTimerRef.current) { clearInterval(vcTimerRef.current); vcTimerRef.current = null; }
+      cancelAnimationFrame(vcAnimRef.current);
+      recorder.stream.getTracks().forEach((t) => t.stop());
+      vcAudioCtxRef.current?.close();
+      vcAudioCtxRef.current = null;
+      vcAnalyserRef.current = null;
+      const blob = new Blob(vcChunksRef.current, { type: recorder.mimeType || "audio/webm" });
+      setVcAudioBlob(blob);
+      setVcAudioUrl(URL.createObjectURL(blob));
+      setVcMode("recorded");
+    };
+    recorder.stop();
+  };
+
+  const vcHandleFile = (file: File) => {
+    setVcError("");
+    setVcSavedVoice(null);
+    if (vcAudioUrl) URL.revokeObjectURL(vcAudioUrl);
+    setVcAudioBlob(file);
+    setVcAudioUrl(URL.createObjectURL(file));
+    if (!vcName) setVcName(file.name.replace(/\.[^.]+$/, ""));
+    setVcMode("recorded");
+  };
+
+  const vcSave = async () => {
+    if (!vcAudioBlob || !vcName.trim()) return;
+    setVcMode("uploading");
+    setVcError("");
+    try {
+      const form = new FormData();
+      const ext = vcAudioBlob instanceof File ? vcAudioBlob.name : "recording.webm";
+      form.append("file", vcAudioBlob, ext);
+      form.append("name", vcName.trim());
+      form.append("ref_text", vcRefText.trim());
+      form.append("language", vcLang);
+      const res = await fetch("/api/upload-voice", { method: "POST", body: form });
+      if (!res.ok) { const err = await res.json().catch(() => ({ detail: "Upload failed" })); throw new Error(err.detail || "Upload failed"); }
+      const result = await res.json();
+      setVcSavedVoice({ id: result.id, name: vcName.trim() });
+      setVcMode("done");
+      await fetchVoices();
+      setSelectedVoice(result.id);
+    } catch (err) {
+      setVcError(err instanceof Error ? err.message : "등록 실패");
+      setVcMode("recorded");
+    }
+  };
+
+  const vcReset = () => {
+    if (vcAudioUrl) URL.revokeObjectURL(vcAudioUrl);
+    setVcMode("idle");
+    setVcName("");
+    setVcRefText("");
+    setVcLang("Korean");
+    setVcElapsed(0);
+    setVcAudioBlob(null);
+    setVcAudioUrl(null);
+    setVcError("");
+    setVcSavedVoice(null);
+  };
+
+  /* ================================================================ */
   /*  TTS logic                                                        */
   /* ================================================================ */
 
@@ -1590,7 +1752,11 @@ export default function Home() {
       const res = await fetch("/api/voices");
       if (!res.ok) return;
       const data = await res.json();
-      const list: Voice[] = data.voices ?? [];
+      const list: Voice[] = (data.voices ?? []).sort((a: Voice, b: Voice) => {
+        if (a.source === "uploaded" && b.source !== "uploaded") return -1;
+        if (a.source !== "uploaded" && b.source === "uploaded") return 1;
+        return 0;
+      });
       setVoices(list);
       if (list.length > 0) {
         const preferred = list.find((v) => v.id === "upload-68582e2a-성우");
@@ -1628,6 +1794,132 @@ export default function Home() {
     finally { setUploading(false); }
   };
 
+  const stripChineseParens = (t: string): string => {
+    return t.replace(/\([^)]*[一-鿿㐀-䶿][^)]*\)/g, "").replace(/\([^)]*[一-鿿㐀-䶿][^)]*\)/g, "");
+  };
+
+  const poemPause = (t: string): string => {
+    return t.replace(/\n(?!\n)/g, "\n\n");
+  };
+
+  const parseNarations = (input: string): NarationItem[] => {
+    const items: NarationItem[] = [];
+    const regex = /<narration>\s*<title>([\s\S]*?)<\/title>\s*<body>([\s\S]*?)<\/body>\s*<\/narration>/gi;
+    let match;
+    while ((match = regex.exec(input)) !== null) {
+      const title = match[1].trim();
+      const body = poemPause(stripChineseParens(match[2].trim()));
+      if (title && body) items.push({ title, body });
+    }
+    return items;
+  };
+
+  const generateBatch = async () => {
+    if (!text.trim() || !selectedVoice) return;
+    const narations = parseNarations(text);
+    if (narations.length === 0) { generate(); return; }
+
+    let voiceToUse = selectedVoice;
+    if (ttsEngine === "elevenlabs" && !voiceToUse.startsWith("el_")) {
+      const fallback = elVoices[0]?.id;
+      if (!fallback) { setGen({ status: "error", message: "ElevenLabs 음성을 먼저 선택하세요", audioUrl: null, duration: null }); return; }
+      voiceToUse = fallback; setSelectedVoice(fallback);
+    }
+    if (ttsEngine === "qwen3" && voiceToUse.startsWith("el_")) {
+      const fallback = voices[0]?.id;
+      if (!fallback) { setGen({ status: "error", message: "Qwen3 음성을 먼저 선택하세요", audioUrl: null, duration: null }); return; }
+      voiceToUse = fallback; setSelectedVoice(fallback);
+    }
+
+    const voiceObj = (ttsEngine === "elevenlabs" ? elVoices : voices).find((v) => v.id === voiceToUse);
+    const voiceName = voiceObj?.name || "";
+    batchAbortRef.current = false;
+    const initResults = narations.map((n) => ({ title: n.title, status: "pending" as const }));
+    setBatchStatus({ running: true, current: 0, total: narations.length, results: initResults });
+    setDebugLogs([]);
+    addDebug(`Batch mode: ${narations.length} narrations detected`);
+
+    for (let i = 0; i < narations.length; i++) {
+      if (batchAbortRef.current) {
+        addDebug(`Batch aborted at ${i + 1}/${narations.length}`);
+        setBatchStatus((prev) => ({ ...prev, running: false }));
+        return;
+      }
+      const item = narations[i];
+      const customFilename = `${item.title}_${voiceName}`;
+      setBatchStatus((prev) => {
+        const results = [...prev.results];
+        results[i] = { ...results[i], status: "generating" };
+        return { ...prev, current: i + 1, results };
+      });
+      addDebug(`[${i + 1}/${narations.length}] Generating: "${item.title}" (${item.body.length} chars)`);
+
+      const body: Record<string, unknown> = { text: item.body, voice_id: voiceToUse, language, engine: ttsEngine, custom_filename: customFilename, poem_mode: true };
+      if (voiceName) body.voice_name = voiceName;
+      if (seed.trim() && ttsEngine === "qwen3") body.seed = parseInt(seed, 10);
+      if (ttsEngine === "qwen3") body.postprocess = postprocess;
+      if (currentProjectId) body.project_id = currentProjectId;
+
+      try {
+        const res = await fetch("/api/generate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+        if (!res.ok) {
+          const errText = await res.text().catch(() => "Request failed");
+          setBatchStatus((prev) => {
+            const results = [...prev.results];
+            results[i] = { ...results[i], status: "error", message: errText };
+            return { ...prev, results };
+          });
+          addDebug(`[${i + 1}] ERROR: ${errText.slice(0, 200)}`);
+          continue;
+        }
+        let completed = false;
+        await readSSE(res, (event) => {
+          if (event.status === "complete") {
+            completed = true;
+            const audioUrl = event.audio_url as string;
+            setBatchStatus((prev) => {
+              const results = [...prev.results];
+              results[i] = { ...results[i], status: "complete", audioUrl };
+              return { ...prev, results };
+            });
+            addDebug(`[${i + 1}] Complete: ${audioUrl}`);
+          } else if (event.status === "error") {
+            setBatchStatus((prev) => {
+              const results = [...prev.results];
+              results[i] = { ...results[i], status: "error", message: event.message as string };
+              return { ...prev, results };
+            });
+            addDebug(`[${i + 1}] Error: ${event.message}`);
+          } else if (event.status === "generating" || event.status === "loading") {
+            const msg = (event.message as string) || "";
+            setBatchStatus((prev) => {
+              const results = [...prev.results];
+              results[i] = { ...results[i], status: "generating", message: msg };
+              return { ...prev, results };
+            });
+            addDebug(`[${i + 1}] ${msg}`);
+          }
+        });
+        if (!completed) {
+          setBatchStatus((prev) => {
+            const results = [...prev.results];
+            if (results[i].status === "generating") results[i] = { ...results[i], status: "error", message: "Stream ended without completion" };
+            return { ...prev, results };
+          });
+        }
+      } catch (err) {
+        setBatchStatus((prev) => {
+          const results = [...prev.results];
+          results[i] = { ...results[i], status: "error", message: err instanceof Error ? err.message : "Unknown error" };
+          return { ...prev, results };
+        });
+        addDebug(`[${i + 1}] FETCH ERROR: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+    setBatchStatus((prev) => ({ ...prev, running: false }));
+    addDebug(`Batch complete: ${narations.length} items processed`);
+  };
+
   const generate = async () => {
     if (!text.trim() || !selectedVoice) return;
     setDebugLogs([]);
@@ -1650,6 +1942,10 @@ export default function Home() {
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
+    genStartRef.current = Date.now();
+    setGenElapsed(0);
+    if (genTimerRef.current) clearInterval(genTimerRef.current);
+    genTimerRef.current = setInterval(() => setGenElapsed(Math.floor((Date.now() - genStartRef.current) / 1000)), 1000);
     setGen({ status: "loading", message: ttsEngine === "elevenlabs" ? "ElevenLabs 준비 중..." : "Preparing...", audioUrl: null, duration: null });
     const voiceObj = (ttsEngine === "elevenlabs" ? elVoices : voices).find((v) => v.id === voiceToUse);
     const body: Record<string, unknown> = { text: text.trim(), voice_id: voiceToUse, language, engine: ttsEngine };
@@ -1676,6 +1972,7 @@ export default function Home() {
         eventCount++;
         addDebug(`SSE #${eventCount}: ${JSON.stringify(event).slice(0, 300)}`);
         if (event.status === "complete") {
+          if (genTimerRef.current) { clearInterval(genTimerRef.current); genTimerRef.current = null; }
           addDebug(`Generation complete in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
           setGen({ status: "complete", message: "Done!", audioUrl: (event.audio_url as string) ?? null, duration: (event.duration as number) ?? null });
           if (currentProjectId && event.audio_url) {
@@ -1693,6 +1990,7 @@ export default function Home() {
             });
           }
         } else if (event.status === "error") {
+          if (genTimerRef.current) { clearInterval(genTimerRef.current); genTimerRef.current = null; }
           addDebug(`SSE error: ${event.message}`);
           setGen({ status: "error", message: (event.message as string) ?? "Failed", audioUrl: null, duration: null });
         } else {
@@ -1704,6 +2002,7 @@ export default function Home() {
         addDebug("WARNING: Stream ended with 0 events — possible timeout or empty response");
       }
     } catch (err: unknown) {
+      if (genTimerRef.current) { clearInterval(genTimerRef.current); genTimerRef.current = null; }
       const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
       if ((err as Error).name === "AbortError") { addDebug(`Aborted by user after ${elapsed}s`); return; }
       addDebug(`FETCH ERROR after ${elapsed}s: ${err instanceof Error ? `${err.name}: ${err.message}` : String(err)}`);
@@ -1711,7 +2010,7 @@ export default function Home() {
     }
   };
 
-  const isGenerating = gen.status === "loading" || gen.status === "generating";
+  const isGenerating = gen.status === "loading" || gen.status === "generating" || batchStatus.running;
   const activeVoices = ttsEngine === "elevenlabs" ? elVoices : voices;
   const currentVoice = activeVoices.find((v) => v.id === selectedVoice);
 
@@ -2136,10 +2435,18 @@ export default function Home() {
                 <div className="flex items-center gap-2">
                   <h2 className="text-lg font-semibold">Text to Speak</h2>
                   {ttsSaved && <span className="text-xs text-green-400">저장됨</span>}
+                  {text.trim() && parseNarations(text).length > 0 && (
+                    <span className="text-xs px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                      Batch: {parseNarations(text).length}편
+                    </span>
+                  )}
                 </div>
                 {text.trim() && <span className="text-xs text-[#b8b0cc]">{text.length.toLocaleString()}자 · {countWords(text).toLocaleString()}단어 · {estimateTtsTime(text.length, ttsEngine)}{ttsEngine === "elevenlabs" && <span className="ml-1 text-amber-300">(≈${(text.length * EL_COST_PER_CHAR).toFixed(3)})</span>}</span>}
               </div>
-              <textarea className="input-field min-h-[200px] resize-y text-sm leading-relaxed" placeholder="Type or paste the text you want to convert to speech..."
+              <textarea className="input-field min-h-[200px] resize-y text-sm leading-relaxed" placeholder="Type or paste the text you want to convert to speech...
+
+Batch mode: paste multiple stories with tags:
+<narration><title>제목</title><body>본문...</body></narration>"
                 value={text} onChange={(e) => setText(e.target.value)} />
               <div className="mt-3 flex flex-wrap gap-2">
                 {EXAMPLES.map((ex) => (<button key={ex.label} className="btn-secondary text-xs" onClick={() => { setText(ex.text); setLanguage(ex.lang); }}>{ex.label}</button>))}
@@ -2154,7 +2461,7 @@ export default function Home() {
                     className={`flex-1 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${ttsEngine === "elevenlabs" ? "bg-accent-600/30 border border-accent-500/50 text-white" : "bg-[#1e1a2e] border border-transparent hover:bg-[#2a2540] text-[#c0bcd0]"}`}>
                     ElevenLabs <span className="text-[10px] text-accent-400/70">Cloud</span>
                   </button>
-                  <button onClick={() => { setTtsEngine("qwen3"); const pref = voices.find((v) => v.id === "upload-68582e2a-성우"); setSelectedVoice(pref?.id || voices[0]?.id || ""); }}
+                  <button onClick={() => { setTtsEngine("qwen3"); setLanguage("Korean"); const pref = voices.find((v) => v.id === "upload-68582e2a-성우"); setSelectedVoice(pref?.id || voices[0]?.id || ""); }}
                     className={`flex-1 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${ttsEngine === "qwen3" ? "bg-accent-600/30 border border-accent-500/50 text-white" : "bg-[#1e1a2e] border border-transparent hover:bg-[#2a2540] text-[#c0bcd0]"}`}>
                     Qwen3-TTS <span className="text-[10px] text-accent-400/70">Local</span>
                   </button>
@@ -2173,21 +2480,83 @@ export default function Home() {
                   </label>
                 </div>
               )}
-              <button className="btn-primary mt-6 w-full text-lg" disabled={!text.trim() || !selectedVoice || isGenerating} onClick={generate}>
-                {isGenerating ? <><Spinner /> Generating...</> : <><PlayIcon /> Generate Speech</>}
+              <button className="btn-primary mt-6 w-full text-lg" disabled={!text.trim() || !selectedVoice || isGenerating} onClick={generateBatch}>
+                {batchStatus.running ? <><Spinner /> Batch {batchStatus.current}/{batchStatus.total}...</> : isGenerating ? <><Spinner /> Generating...{genElapsed > 0 && <span className="ml-2 font-mono text-sm opacity-80">{Math.floor(genElapsed / 60)}:{(genElapsed % 60).toString().padStart(2, "0")}</span>}</> : <><PlayIcon /> Generate Speech</>}
               </button>
+              {batchStatus.running && (
+                <button className="btn-secondary mt-2 w-full text-sm text-red-400" onClick={() => { batchAbortRef.current = true; }}>
+                  Batch 중단
+                </button>
+              )}
               {ttsEngine === "elevenlabs" && <p className="mt-2 text-xs text-[#6b6580]">ElevenLabs 클라우드 TTS (빠름, 다국어 지원)</p>}
             </section>
             {gen.status !== "idle" && (
               <section className="card">
                 <h2 className="mb-4 text-lg font-semibold">Output</h2>
                 {(gen.status === "loading" || gen.status === "generating") && (
-                  <div className="space-y-3"><div className="flex items-center gap-3"><Spinner /><span className="text-sm text-[#a09bb5]">{gen.message}</span></div>
+                  <div className="space-y-3"><div className="flex items-center gap-3"><Spinner /><span className="text-sm text-[#a09bb5]">{gen.message}</span><span className="text-sm font-mono text-accent-400">{genElapsed > 0 && `${Math.floor(genElapsed / 60)}:${(genElapsed % 60).toString().padStart(2, "0")}`}</span></div>
                     <div className="h-2 overflow-hidden rounded-full bg-[#241f33]"><div className="progress-pulse h-full rounded-full bg-gradient-to-r from-accent-600 to-purple-500" style={{ width: gen.status === "loading" ? "40%" : "75%", transition: "width 0.5s ease" }} /></div></div>)}
                 {gen.status === "error" && <div className="rounded-lg border border-red-800/50 bg-red-900/20 px-4 py-3 text-sm text-red-300">{gen.message}</div>}
                 {gen.status === "complete" && gen.audioUrl && (
-                  <div className="space-y-4"><div className="flex items-center gap-2 text-sm text-green-400"><CheckIcon /><span>Done!{gen.duration != null && <span className="ml-2 text-[#6b6580]">({gen.duration.toFixed(1)}s)</span>}</span></div>
+                  <div className="space-y-4"><div className="flex items-center gap-2 text-sm text-green-400"><CheckIcon /><span>Done!{genElapsed > 0 && <span className="ml-2 text-[#6b6580]">(소요시간: {genElapsed < 60 ? `${genElapsed}초` : `${Math.floor(genElapsed / 60)}분 ${genElapsed % 60}초`})</span>}{gen.duration != null && <span className="ml-1 text-[#6b6580]">· 오디오 {gen.duration.toFixed(1)}s</span>}</span></div>
                     <AudioPlayer src={gen.audioUrl} /><a href={gen.audioUrl} download className="btn-secondary inline-flex mt-2"><DownloadIcon /> Download</a></div>)}
+              </section>
+            )}
+            {batchStatus.total > 0 && (
+              <section className="card">
+                <div className="mb-3 flex items-center justify-between">
+                  <h2 className="text-lg font-semibold">Batch Output ({batchStatus.results.filter((r) => r.status === "complete").length}/{batchStatus.total})</h2>
+                  {!batchStatus.running && <button className="btn-secondary text-xs" onClick={() => setBatchStatus({ running: false, current: 0, total: 0, results: [] })}>Clear</button>}
+                </div>
+                {batchStatus.running && (
+                  <div className="mb-3 h-2 overflow-hidden rounded-full bg-[#241f33]">
+                    <div className="h-full rounded-full bg-gradient-to-r from-accent-600 to-purple-500 transition-all duration-500" style={{ width: `${(batchStatus.current / batchStatus.total) * 100}%` }} />
+                  </div>
+                )}
+                <div className="space-y-2 max-h-[400px] overflow-y-auto">
+                  {batchStatus.results.map((r, i) => (
+                    <div key={i} className={`rounded-lg px-4 py-3 text-sm ${r.status === "complete" ? "bg-green-900/20 border border-green-800/40" : r.status === "error" ? "bg-red-900/20 border border-red-800/40" : r.status === "generating" ? "bg-accent-900/20 border border-accent-500/40" : "bg-[#1e1a2e] border border-transparent"}`}>
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="font-medium text-[#e8e4f0] truncate">{i + 1}. {r.title}</span>
+                          {r.status === "generating" && <Spinner small />}
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          {r.status === "complete" && <span className="text-xs text-green-400">완료</span>}
+                          {r.status === "error" && <span className="text-xs text-red-400">실패</span>}
+                          {r.status === "pending" && <span className="text-xs text-[#6b6580]">대기</span>}
+                          {r.status === "generating" && <span className="text-xs text-accent-400">생성 중</span>}
+                        </div>
+                      </div>
+                      {r.status === "complete" && r.audioUrl && (
+                        <div className="mt-2">
+                          <AudioPlayer src={r.audioUrl} />
+                          <a href={r.audioUrl} download className="btn-secondary inline-flex mt-1 text-xs"><DownloadIcon /> Download</a>
+                        </div>
+                      )}
+                      {r.status === "generating" && r.message && (() => {
+                        const chunkMatch = r.message.match(/Chunk (\d+)\/(\d+)/);
+                        const chunkCur = chunkMatch ? parseInt(chunkMatch[1]) : 0;
+                        const chunkTotal = chunkMatch ? parseInt(chunkMatch[2]) : 0;
+                        const pct = chunkTotal > 0 ? Math.round((chunkCur / chunkTotal) * 100) : 0;
+                        return (
+                          <div className="mt-2 space-y-1">
+                            {chunkTotal > 0 && (
+                              <div className="flex items-center gap-2">
+                                <div className="flex-1 h-1.5 rounded-full bg-[#241f33] overflow-hidden">
+                                  <div className="h-full rounded-full bg-accent-500 transition-all duration-300" style={{ width: `${pct}%` }} />
+                                </div>
+                                <span className="text-xs font-mono text-accent-400 shrink-0">{chunkCur}/{chunkTotal} ({pct}%)</span>
+                              </div>
+                            )}
+                            <p className="text-xs text-accent-300/70 truncate">{r.message}</p>
+                          </div>
+                        );
+                      })()}
+                      {r.status === "error" && r.message && <p className="mt-1 text-xs text-red-300">{r.message}</p>}
+                    </div>
+                  ))}
+                </div>
               </section>
             )}
             {debugLogs.length > 0 && (
@@ -2908,7 +3277,7 @@ export default function Home() {
                 </div>
                 <p className="mt-1 text-xs text-[#6b6580]">빠른 클라우드 TTS, 다국어 지원, ~1초 생성</p>
               </button>
-              <button onClick={() => { setTtsEngine("qwen3"); const pref = voices.find((v) => v.id === "upload-68582e2a-성우"); if (voices.length > 0) setSelectedVoice(pref?.id || voices[0].id); }}
+              <button onClick={() => { setTtsEngine("qwen3"); setLanguage("Korean"); const pref = voices.find((v) => v.id === "upload-68582e2a-성우"); if (voices.length > 0) setSelectedVoice(pref?.id || voices[0].id); }}
                 className={`w-full rounded-lg px-4 py-3 text-left text-sm transition-colors ${ttsEngine === "qwen3" ? "bg-accent-600/30 border border-accent-500/50 text-white" : "bg-[#1e1a2e] border border-transparent hover:bg-[#2a2540] text-[#c0bcd0]"}`}>
                 <div className="flex items-center justify-between">
                   <div><span className="font-medium">Qwen3-TTS 1.7B</span><span className="ml-2 rounded px-1.5 py-0.5 text-[10px] bg-blue-500/20 text-blue-300">Local GPU</span></div>
@@ -2930,6 +3299,133 @@ export default function Home() {
                 </button>
               ))}
             </div>
+          </section>
+
+          {/* Voice Clone */}
+          <section className="card">
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-lg font-semibold">음성 클론 (Voice Clone)</h2>
+              {vcMode !== "idle" && vcMode !== "uploading" && (
+                <button className="btn-secondary text-xs" onClick={vcReset}>초기화</button>
+              )}
+            </div>
+            <p className="mb-4 text-sm text-[#a09bb5]">Qwen3-TTS로 음성을 복제하려면 3초 이상의 음성 샘플과 해당 스크립트를 등록하세요.</p>
+
+            {/* Record / Upload area */}
+            {vcMode === "idle" && (
+              <div className="space-y-3">
+                <div className="flex gap-3">
+                  <button className="btn-primary flex-1 flex items-center justify-center gap-2" onClick={vcStartRecording}>
+                    <MicIcon /> 녹음하기
+                  </button>
+                  <button className="btn-secondary flex-1 flex items-center justify-center gap-2" onClick={() => vcFileRef.current?.click()}>
+                    <UploadIcon /> 파일 업로드
+                  </button>
+                  <input ref={vcFileRef} type="file" accept=".wav,.m4a,.mp3,.ogg,.flac,.webm,audio/*" className="hidden"
+                    onChange={(e) => { const f = e.target.files?.[0]; if (f) vcHandleFile(f); e.target.value = ""; }} />
+                </div>
+                <p className="text-xs text-[#6b6580]">WAV, MP3, M4A, WebM 등 지원 (최대 50MB, 권장 3~30초)</p>
+              </div>
+            )}
+
+            {/* Recording */}
+            {vcMode === "recording" && (
+              <div className="space-y-3">
+                <div className="relative">
+                  <canvas ref={vcCanvasRef} width={600} height={80} className="w-full rounded-lg bg-[#1e1a2e]" />
+                  <div className="absolute right-3 top-2 flex items-center gap-2">
+                    <span className="h-2.5 w-2.5 rounded-full bg-red-500 animate-pulse" />
+                    <span className="font-mono text-sm text-red-400">{Math.floor(vcElapsed / 60)}:{(vcElapsed % 60).toString().padStart(2, "0")}</span>
+                  </div>
+                </div>
+                <button className="btn-primary w-full flex items-center justify-center gap-2" onClick={vcStopRecording}>
+                  <StopIcon /> 녹음 중지
+                </button>
+              </div>
+            )}
+
+            {/* Recorded / Done — show form */}
+            {(vcMode === "recorded" || vcMode === "done" || vcMode === "uploading") && (
+              <div className="space-y-4">
+                {/* Audio preview */}
+                {vcAudioUrl && (
+                  <div className="rounded-lg bg-[#1e1a2e] p-3">
+                    <div className="mb-1 flex items-center justify-between">
+                      <span className="text-xs text-[#6b6580]">음성 미리듣기</span>
+                      {vcElapsed > 0 && <span className="text-xs text-[#6b6580]">녹음: {vcElapsed}초</span>}
+                    </div>
+                    <audio src={vcAudioUrl} controls className="w-full h-8" style={{ filter: "invert(0.85) hue-rotate(180deg)" }} />
+                  </div>
+                )}
+
+                {/* Voice Name */}
+                <div>
+                  <label className="label">음성 이름 *</label>
+                  <input type="text" className="input-field" placeholder="예: 엄마, 아버지, 나레이터" value={vcName}
+                    onChange={(e) => setVcName(e.target.value)} disabled={vcMode === "uploading" || vcMode === "done"} />
+                </div>
+
+                {/* Language */}
+                <div>
+                  <label className="label">언어</label>
+                  <select className="input-field cursor-pointer" value={vcLang} onChange={(e) => setVcLang(e.target.value)}
+                    disabled={vcMode === "uploading" || vcMode === "done"}>
+                    {LANGUAGES.map((l) => <option key={l} value={l}>{l}</option>)}
+                  </select>
+                </div>
+
+                {/* Reference Script */}
+                <div>
+                  <label className="label">음성 스크립트 (Reference Text)</label>
+                  <textarea className="input-field min-h-[80px] resize-y text-sm leading-relaxed"
+                    placeholder="녹음/업로드한 음성에서 말하는 내용을 정확히 입력하세요. 음성 복제 품질이 크게 향상됩니다."
+                    value={vcRefText} onChange={(e) => setVcRefText(e.target.value)}
+                    disabled={vcMode === "uploading" || vcMode === "done"} />
+                  <p className="mt-1 text-xs text-[#6b6580]">
+                    {vcRefText.trim() ? `${vcRefText.trim().length}자` : "스크립트 없이도 음성 복제가 가능하지만, 입력하면 품질이 훨씬 좋��집니다."}
+                  </p>
+                </div>
+
+                {/* Error */}
+                {vcError && <div className="rounded-lg border border-red-800/50 bg-red-900/20 px-4 py-2 text-sm text-red-300">{vcError}</div>}
+
+                {/* Save / Done */}
+                {vcMode === "done" && vcSavedVoice ? (
+                  <div className="flex items-center gap-2 rounded-lg border border-green-800/50 bg-green-900/20 px-4 py-3 text-sm text-green-300">
+                    <CheckIcon />
+                    <span>&quot;{vcSavedVoice.name}&quot; 음성이 등록되었습니다. 오디오북생성 탭에서 사용할 수 있습니다.</span>
+                  </div>
+                ) : (
+                  <div className="flex gap-3">
+                    <button className="btn-secondary flex-1" onClick={vcReset} disabled={vcMode === "uploading"}>취소</button>
+                    <button className="btn-primary flex-1" disabled={!vcName.trim() || vcMode === "uploading"} onClick={vcSave}>
+                      {vcMode === "uploading" ? <><Spinner small /> 등록 중...</> : "음성 등록"}
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Registered voices list */}
+            {voices.filter((v) => v.source === "uploaded").length > 0 && (
+              <div className="mt-6 border-t border-[#2e2845] pt-4">
+                <h3 className="mb-3 text-sm font-medium text-[#a09bb5]">등록된 음성 ({voices.filter((v) => v.source === "uploaded").length})</h3>
+                <div className="space-y-1.5 max-h-[200px] overflow-y-auto pr-1">
+                  {voices.filter((v) => v.source === "uploaded").map((v) => (
+                    <div key={v.id} className="flex items-center justify-between rounded-lg bg-[#1e1a2e] px-3 py-2 text-sm">
+                      <div>
+                        <span className="font-medium text-white">{v.name}</span>
+                        <span className="ml-2 text-xs text-[#6b6580]">{v.language}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {v.ref_text && <span className="text-[10px] text-accent-400/70">스크립트 있음</span>}
+                        {!v.ref_text && <span className="text-[10px] text-amber-400/70">��크립트 없음</span>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </section>
         </div>
       )}

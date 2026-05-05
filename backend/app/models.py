@@ -14,6 +14,8 @@ class GenerateRequest(BaseModel):
     voice_name: Optional[str] = Field(default=None, description="Human-readable voice name for output filename")
     project_id: Optional[str] = Field(default=None, description="Associate generated audio with a project")
     postprocess: bool = Field(default=False, description="Apply audio post-processing (compression, normalization) for Qwen3")
+    custom_filename: Optional[str] = Field(default=None, description="Exact output filename (without extension). If set, overrides output_name/voice_name naming.")
+    poem_mode: bool = Field(default=False, description="Poem mode: longer pauses between lines and slower pace")
 
 
 class VoiceInfo(BaseModel):

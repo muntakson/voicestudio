@@ -19,6 +19,7 @@ import torch
 logger = logging.getLogger(__name__)
 
 CHUNK_CHAR_LIMIT = 500
+_PAUSE_MARKER = "\n\n__PAUSE_1S__\n\n"
 
 
 def _gpu_info() -> dict:
@@ -57,6 +58,78 @@ def _smooth_audio(audio: np.ndarray, sr: int) -> np.ndarray:
     from app.audio_smoother import smooth_and_verify
     audio, sr, report = smooth_and_verify(audio, sr)
     logger.info("Audio smoother: %s", report.summary().replace("\n", " | "))
+    return audio
+
+
+def _despike_and_limit(audio: np.ndarray, sr: int, target_lufs: float = -18.0) -> np.ndarray:
+    """Remove single-sample spike artifacts and apply peak limiting.
+
+    Qwen3-TTS produces occasional isolated impulse spikes (1-3 samples)
+    that are much louder than surrounding speech. This detects and replaces
+    them with linearly interpolated values, then normalizes to audiobook level.
+    """
+    from scipy.signal import medfilt
+
+    audio = audio.astype(np.float64)
+    n = len(audio)
+
+    # --- Phase 1: Despike using adaptive threshold ---
+    # Compute local RMS in 10ms windows for adaptive threshold
+    win = int(sr * 0.01)  # 10ms
+    num_wins = n // win
+    local_rms = np.zeros(n, dtype=np.float64)
+    for i in range(num_wins):
+        s, e = i * win, (i + 1) * win
+        local_rms[s:e] = np.sqrt(np.mean(audio[s:e] ** 2))
+    if num_wins * win < n:
+        local_rms[num_wins * win:] = local_rms[max(0, num_wins * win - 1)]
+
+    spike_count = 0
+    abs_audio = np.abs(audio)
+    for i in range(2, n - 2):
+        threshold = max(0.85, local_rms[i] * 4.0)
+        if abs_audio[i] > threshold:
+            neighbors = max(abs_audio[i - 2], abs_audio[i - 1],
+                            abs_audio[i + 1], abs_audio[i + 2])
+            if neighbors < abs_audio[i] * 0.55:
+                audio[i] = (audio[i - 1] + audio[i + 1]) / 2.0
+                spike_count += 1
+
+    # --- Phase 2: Gentle median filter on remaining micro-spikes ---
+    # 3-sample median catches any 1-sample outliers without smearing speech
+    audio_med = medfilt(audio, kernel_size=3)
+    # Only apply median where it differs significantly (spike residuals)
+    diff = np.abs(audio - audio_med)
+    spike_residual = diff > 0.3
+    audio[spike_residual] = audio_med[spike_residual]
+    residual_fixes = int(np.sum(spike_residual))
+
+    # --- Phase 3: Normalize to target loudness + peak limit ---
+    peak = np.max(np.abs(audio))
+    gain = 1.0
+    if peak > 0:
+        target_peak = 0.89  # -1 dBFS
+        rms = np.sqrt(np.mean(audio ** 2))
+        current_lufs_approx = 20 * np.log10(rms + 1e-10)
+        gain_db = target_lufs - current_lufs_approx
+        gain = 10 ** (gain_db / 20.0)
+        gain = np.clip(gain, 10 ** (-12.0 / 20), 10 ** (6.0 / 20))
+        audio *= gain
+
+        # Soft-clip only samples exceeding target_peak
+        over = np.abs(audio) > target_peak
+        if np.any(over):
+            signs = np.sign(audio[over])
+            excess = np.abs(audio[over]) - target_peak
+            audio[over] = signs * (target_peak + np.tanh(excess * 3) * (1.0 - target_peak))
+
+    final_peak = np.max(np.abs(audio))
+    final_rms = np.sqrt(np.mean(audio ** 2))
+    logger.info(
+        "Despike+limit: removed %d spikes, %d residuals, gain=%.2fdB, peak=%.3f, RMS=%.1f dBFS",
+        spike_count, residual_fixes, 20 * np.log10(gain) if gain > 0 else 0,
+        final_peak, 20 * np.log10(final_rms + 1e-10),
+    )
     return audio
 
 
@@ -242,12 +315,14 @@ class TTSService:
         voice_name: Optional[str] = None,
         on_progress: Optional[callable] = None,
         postprocess: bool = False,
+        custom_filename: Optional[str] = None,
+        poem_mode: bool = False,
     ) -> dict:
         if not self._loaded:
             raise RuntimeError("Model is not loaded yet")
 
         with self._lock:
-            return self._generate_locked(text, voice_id, language, seed, output_name, voice_name, on_progress, postprocess)
+            return self._generate_locked(text, voice_id, language, seed, output_name, voice_name, on_progress, postprocess, custom_filename, poem_mode)
 
     @staticmethod
     def _sanitize_filename(name: str) -> str:
@@ -304,6 +379,29 @@ class TTSService:
             chunks.append((buf.strip(), pending_break))
         return chunks
 
+    @staticmethod
+    def _preprocess_script(text: str) -> str:
+        """Strip audiobook script meta-tags and convert pause markers to internal tokens.
+
+        - [잠시멈춤] and similar pause tags → 1-second silence marker
+        - Dash separators (5+ dashes) → 1-second silence marker
+        - Tone/mood directions like [미소 짓는 듯한 목소리로] → removed from narration
+        - Structural tags like [오디오북대본] → removed
+        """
+        PAUSE_KEYWORDS = {"잠시멈춤", "멈춤", "침묵", "pause", "쉼"}
+
+        def _replace_bracket(m: re.Match) -> str:
+            content = m.group(1).strip()
+            for kw in PAUSE_KEYWORDS:
+                if kw in content:
+                    return _PAUSE_MARKER
+            return ""
+
+        result = re.sub(r'\[([^\]]*)\]', _replace_bracket, text)
+        result = re.sub(r'-{5,}', _PAUSE_MARKER, result)
+        result = re.sub(r'(\n\s*){3,}', '\n\n', result)
+        return result.strip()
+
     def _generate_locked(
         self,
         text: str,
@@ -314,6 +412,8 @@ class TTSService:
         voice_name: Optional[str] = None,
         on_progress: Optional[callable] = None,
         postprocess: bool = False,
+        custom_filename: Optional[str] = None,
+        poem_mode: bool = False,
     ) -> dict:
         import soundfile as sf
 
@@ -326,8 +426,20 @@ class TTSService:
         start_time = time.time()
         use_xvector_only = not ref_text.strip()
 
-        chunk_pairs = self._split_text(text)
-        total_chunks = len(chunk_pairs)
+        processed_text = self._preprocess_script(text)
+        logger.info("Script preprocessed: %d→%d chars", len(text), len(processed_text))
+
+        segments = [s.strip() for s in processed_text.split(_PAUSE_MARKER.strip())]
+        segments = [s for s in segments if s]
+
+        chunk_pairs: list[tuple[str, str]] = []
+        for seg_idx, seg in enumerate(segments):
+            if seg_idx > 0:
+                chunk_pairs.append(("", "script_pause"))
+            for chunk, break_type in self._split_text(seg):
+                chunk_pairs.append((chunk, break_type))
+
+        total_chunks = len([c for c, bt in chunk_pairs if c])
 
         pre_gpu = _gpu_info()
         logger.info(
@@ -350,11 +462,18 @@ class TTSService:
         all_audio: list[np.ndarray] = []
         break_types: list[str] = []
         sr = None
+        gen_idx = 0
 
         for i, (chunk, break_type) in enumerate(chunk_pairs):
+            if break_type == "script_pause":
+                break_types.append("script_pause")
+                all_audio.append(None)
+                continue
+
+            gen_idx += 1
             chunk_start = time.time()
             if on_progress and total_chunks > 1:
-                on_progress(i + 1, total_chunks, chunk[:60])
+                on_progress(gen_idx, total_chunks, chunk[:60])
 
             wavs, chunk_sr = self.model.generate_voice_clone(
                 text=chunk,
@@ -372,7 +491,7 @@ class TTSService:
             chunk_gpu = _gpu_info()
             logger.info(
                 "  Chunk %d/%d: %d chars → %.1fs audio in %.1fs (RTF=%.2f) [%s] | GPU alloc=%sMB util=%s%%",
-                i + 1, total_chunks, len(chunk), chunk_dur, chunk_time, rtf, break_type,
+                gen_idx, total_chunks, len(chunk), chunk_dur, chunk_time, rtf, break_type,
                 chunk_gpu.get("allocated_mb"), chunk_gpu.get("gpu_util_pct", "N/A"),
             )
 
@@ -381,6 +500,8 @@ class TTSService:
         fade_out = np.cos(np.linspace(0, np.pi / 2, fade_samples)) ** 2
         fade_in = np.cos(np.linspace(np.pi / 2, 0, fade_samples)) ** 2
         for i in range(len(all_audio)):
+            if all_audio[i] is None:
+                continue
             seg = all_audio[i].astype(np.float64)
             n = min(fade_samples, len(seg) // 2)
             seg[:n] *= fade_in[:n]
@@ -389,15 +510,30 @@ class TTSService:
 
         PAUSE_PARAGRAPH = 1.5
         PAUSE_SENTENCE = 0.8
-        if total_chunks > 1:
-            parts = [all_audio[0]]
+        PAUSE_SCRIPT = 1.0
+        audio_segments = [(a, b) for a, b in zip(all_audio, break_types) if a is not None]
+        if len(audio_segments) > 1:
+            parts = [audio_segments[0][0]]
+            pending_script_pause = False
             for j in range(1, len(all_audio)):
-                pause_sec = PAUSE_PARAGRAPH if break_types[j] == "paragraph" else PAUSE_SENTENCE
-                parts.append(np.zeros(int(sr * pause_sec), dtype=np.float64))
+                if all_audio[j] is None:
+                    pending_script_pause = True
+                    continue
+                if pending_script_pause:
+                    parts.append(np.zeros(int(sr * PAUSE_SCRIPT), dtype=np.float64))
+                    pending_script_pause = False
+                else:
+                    bt = break_types[j]
+                    pause_sec = PAUSE_PARAGRAPH if bt == "paragraph" else PAUSE_SENTENCE
+                    parts.append(np.zeros(int(sr * pause_sec), dtype=np.float64))
                 parts.append(all_audio[j])
             audio = np.concatenate(parts)
+        elif len(audio_segments) == 1:
+            audio = audio_segments[0][0]
         else:
-            audio = all_audio[0]
+            audio = np.zeros(int(sr * 0.5), dtype=np.float64)
+
+        audio = _despike_and_limit(audio, sr)
 
         if postprocess:
             audio = _smooth_audio(audio, sr)
@@ -408,15 +544,23 @@ class TTSService:
         duration = len(audio) / sr
 
         os.makedirs(OUTPUTS_DIR, exist_ok=True)
-        timestamp = datetime.now().strftime("%Y%m%d-%H%M")
-        project_part = self._sanitize_filename(output_name) if output_name else ""
-        voice_part = self._sanitize_filename(voice_name) if voice_name else ""
-        parts = [p for p in [project_part, voice_part, "qwen", timestamp] if p]
-        output_filename = "_".join(parts) + ".wav"
-        output_path = os.path.join(OUTPUTS_DIR, output_filename)
-        if os.path.exists(output_path):
-            output_filename = "_".join(parts + [uuid.uuid4().hex[:4]]) + ".wav"
+        if custom_filename:
+            sanitized = self._sanitize_filename(custom_filename)
+            output_filename = sanitized + ".wav"
             output_path = os.path.join(OUTPUTS_DIR, output_filename)
+            if os.path.exists(output_path):
+                output_filename = sanitized + "_" + uuid.uuid4().hex[:4] + ".wav"
+                output_path = os.path.join(OUTPUTS_DIR, output_filename)
+        else:
+            timestamp = datetime.now().strftime("%Y%m%d-%H%M")
+            project_part = self._sanitize_filename(output_name) if output_name else ""
+            voice_part = self._sanitize_filename(voice_name) if voice_name else ""
+            parts = [p for p in [project_part, voice_part, "qwen", timestamp] if p]
+            output_filename = "_".join(parts) + ".wav"
+            output_path = os.path.join(OUTPUTS_DIR, output_filename)
+            if os.path.exists(output_path):
+                output_filename = "_".join(parts + [uuid.uuid4().hex[:4]]) + ".wav"
+                output_path = os.path.join(OUTPUTS_DIR, output_filename)
         sf.write(output_path, audio, sr)
 
         rtf_total = generation_time / duration if duration > 0 else 0

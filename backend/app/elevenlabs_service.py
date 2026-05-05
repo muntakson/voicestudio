@@ -90,9 +90,9 @@ class ElevenLabsService:
 
         return voices
 
-    def generate(self, text: str, voice_id: str, output_name: Optional[str] = None, voice_name: Optional[str] = None) -> dict:
+    def generate(self, text: str, voice_id: str, output_name: Optional[str] = None, voice_name: Optional[str] = None, custom_filename: Optional[str] = None) -> dict:
         with self._lock:
-            return self._generate_locked(text, voice_id, output_name, voice_name)
+            return self._generate_locked(text, voice_id, output_name, voice_name, custom_filename)
 
     @staticmethod
     def _sanitize_filename(name: str) -> str:
@@ -101,7 +101,7 @@ class ElevenLabsService:
         name = re.sub(r'\s+', '_', name)
         return name[:80] if name else ""
 
-    def _generate_locked(self, text: str, voice_id: str, output_name: Optional[str] = None, voice_name: Optional[str] = None) -> dict:
+    def _generate_locked(self, text: str, voice_id: str, output_name: Optional[str] = None, voice_name: Optional[str] = None, custom_filename: Optional[str] = None) -> dict:
         el_voice_id = voice_id.removeprefix("el_")
 
         start_time = time.time()
@@ -126,15 +126,23 @@ class ElevenLabsService:
         generation_time = time.time() - start_time
 
         os.makedirs(OUTPUTS_DIR, exist_ok=True)
-        timestamp = datetime.now().strftime("%Y%m%d-%H%M")
-        project_part = self._sanitize_filename(output_name) if output_name else ""
-        voice_part = self._sanitize_filename(voice_name) if voice_name else ""
-        parts = [p for p in [project_part, voice_part, "elevenlabs", timestamp] if p]
-        output_filename = "_".join(parts) + ".mp3"
-        output_path = os.path.join(OUTPUTS_DIR, output_filename)
-        if os.path.exists(output_path):
-            output_filename = "_".join(parts + [uuid.uuid4().hex[:4]]) + ".mp3"
+        if custom_filename:
+            sanitized = self._sanitize_filename(custom_filename)
+            output_filename = sanitized + ".mp3"
             output_path = os.path.join(OUTPUTS_DIR, output_filename)
+            if os.path.exists(output_path):
+                output_filename = sanitized + "_" + uuid.uuid4().hex[:4] + ".mp3"
+                output_path = os.path.join(OUTPUTS_DIR, output_filename)
+        else:
+            timestamp = datetime.now().strftime("%Y%m%d-%H%M")
+            project_part = self._sanitize_filename(output_name) if output_name else ""
+            voice_part = self._sanitize_filename(voice_name) if voice_name else ""
+            parts = [p for p in [project_part, voice_part, "elevenlabs", timestamp] if p]
+            output_filename = "_".join(parts) + ".mp3"
+            output_path = os.path.join(OUTPUTS_DIR, output_filename)
+            if os.path.exists(output_path):
+                output_filename = "_".join(parts + [uuid.uuid4().hex[:4]]) + ".mp3"
+                output_path = os.path.join(OUTPUTS_DIR, output_filename)
         with open(output_path, "wb") as f:
             f.write(resp.content)
 

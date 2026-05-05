@@ -137,13 +137,18 @@ async def generate_audio(req: GenerateRequest):
                 loop = asyncio.get_event_loop()
                 result = await loop.run_in_executor(
                     None,
-                    lambda: elevenlabs_service.generate(text=req.text, voice_id=voice_id, output_name=req.output_name, voice_name=req.voice_name),
+                    lambda: elevenlabs_service.generate(text=req.text, voice_id=voice_id, output_name=req.output_name, voice_name=req.voice_name, custom_filename=req.custom_filename),
                 )
                 out_fname = result["output_filename"]
                 if req.project_id:
                     out_path = os.path.join(OUTPUTS_DIR, out_fname)
                     fsize = os.path.getsize(out_path) if os.path.isfile(out_path) else 0
                     add_project_audio(req.project_id, out_fname, out_fname, fsize, "output")
+                    update_project(req.project_id,
+                                   tts_elapsed=result["generation_time"],
+                                   tts_engine="elevenlabs",
+                                   tts_model="eleven_flash_v2_5",
+                                   tts_text_chars=result.get("text_chars", 0))
                 yield _sse({
                     "status": "complete",
                     "audio_url": f"/api/outputs/{out_fname}",
@@ -178,6 +183,7 @@ async def generate_audio(req: GenerateRequest):
                         text=req.text, voice_id=req.voice_id, language=req.language,
                         seed=req.seed, output_name=req.output_name, voice_name=req.voice_name,
                         on_progress=on_chunk_progress, postprocess=req.postprocess,
+                        custom_filename=req.custom_filename, poem_mode=req.poem_mode,
                     ),
                 )
                 elapsed = 0
@@ -196,6 +202,11 @@ async def generate_audio(req: GenerateRequest):
                     out_path = os.path.join(OUTPUTS_DIR, out_fname)
                     fsize = os.path.getsize(out_path) if os.path.isfile(out_path) else 0
                     add_project_audio(req.project_id, out_fname, out_fname, fsize, "output")
+                    update_project(req.project_id,
+                                   tts_elapsed=result["generation_time"],
+                                   tts_engine="qwen3",
+                                   tts_model="Qwen3-TTS-1.7B",
+                                   tts_text_chars=len(req.text))
                 yield _sse({
                     "status": "complete",
                     "audio_url": f"/api/outputs/{out_fname}",
