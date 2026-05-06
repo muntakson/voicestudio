@@ -4,8 +4,10 @@ __pycache__/
 *.pyc
 
 # Node
+node_modules/
 frontend/node_modules/
 frontend/.next/
+package-lock.json
 
 # Backend data
 backend/uploads/
@@ -13,22 +15,43 @@ backend/outputs/
 backend/logs/
 backend/artifacts/
 backend/audio_files/
+backend/infographics/
+backend/videos/
 backend/projects.db*
 
 # Build artifacts
 frontend/tsconfig.tsbuildinfo
 
-# Audio files in root
+# Audio/media files in root
 *.m4a
 *.wav
 *.mp3
+
+# Images in root
+*.png
+
+# Fonts
+*.otf
+*.ttf
 
 # Stray pip artifacts
 backend/=*
 
 # OS
 .DS_Store
+Thumbs.db
 
 # Env / secrets
 .env
 backend/start.sh
+
+# Logs
+logs/
+
+# Test artifacts
+test-results/
+test_tts.py
+
+# Root-level package files (frontend has its own)
+/package.json
+/package-lock.json
