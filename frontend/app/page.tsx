@@ -11,7 +11,7 @@ interface GenerationStatus { status: "idle" | "loading" | "generating" | "comple
 interface TranscriptSegment { speaker: number; start: number; end: number; text: string; }
 interface TranscriptResult { segments: TranscriptSegment[]; full_text: string; duration: number; processing_time: number; }
 
-interface AuthUser { username: string; role: string; token: string; }
+interface AuthUser { username: string; role: string; token: string; quota_remaining_krw?: number; }
 
 interface Project {
   id: string; name: string; created_at: string; owner: string | null;
@@ -328,7 +328,7 @@ export default function Home() {
       const endpoint = authMode === "signup" ? "/api/auth/signup" : "/api/auth/signin";
       const res = await fetch(endpoint, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders(),
         body: JSON.stringify({ username: authUsername.trim(), password: authPassword }),
       });
       if (!res.ok) {
@@ -350,6 +350,24 @@ export default function Home() {
     setAuthUser(null);
     localStorage.removeItem("voicestudio_auth");
   };
+
+  const refreshQuota = useCallback(async () => {
+    if (!authUser?.token || authUser.role === "admin") return;
+    try {
+      const res = await fetch("/api/quota", { headers: { Authorization: `Bearer ${authUser.token}` } });
+      if (res.ok) {
+        const data = await res.json();
+        setAuthUser(prev => prev ? { ...prev, quota_remaining_krw: data.remaining_krw } : null);
+      }
+    } catch { /* silent */ }
+  }, [authUser?.token, authUser?.role]);
+
+  useEffect(() => { if (authUser?.token) refreshQuota(); }, [authUser?.token, refreshQuota]);
+  useEffect(() => {
+    if (!authUser?.token || authUser.role === "admin") return;
+    const interval = setInterval(refreshQuota, 30000);
+    return () => clearInterval(interval);
+  }, [authUser?.token, authUser?.role, refreshQuota]);
 
   /* ---- View state ---- */
   const [view, setView] = useState<"landing" | "studio">("landing");
@@ -694,7 +712,7 @@ export default function Home() {
     if (!currentProjectId) return;
     try {
       await fetch(`/api/projects/${currentProjectId}`, {
-        method: "PATCH", headers: { "Content-Type": "application/json" },
+        method: "PATCH", headers: authHeaders(),
         body: JSON.stringify(fields),
       });
     } catch { /* silent */ }
@@ -759,7 +777,7 @@ export default function Home() {
     setPsAudioUrl(null); setPsAudioDuration(null);
     try {
       const res = await fetch("/api/poem-shorts/generate-audio", {
-        method: "POST", headers: { "Content-Type": "application/json" },
+        method: "POST", headers: authHeaders(),
         body: JSON.stringify({ poem_text: psPoem, project_id: currentProjectId || "", voice_id: "upload-68582e2a-성우" }),
         signal: controller.signal,
       });
@@ -786,7 +804,7 @@ export default function Home() {
     setPsImagePromptStatus({ status: "generating", message: "이미지 프롬프트 생성 중..." });
     try {
       const res = await fetch("/api/poem-shorts/generate-image-prompt", {
-        method: "POST", headers: { "Content-Type": "application/json" },
+        method: "POST", headers: authHeaders(),
         body: JSON.stringify({ poem_text: psPoem, project_id: currentProjectId || "", model: selectedModel }),
       });
       if (!res.ok) { setPsImagePromptStatus({ status: "error", message: await res.text() }); return; }
@@ -811,7 +829,7 @@ export default function Home() {
     setPsImageUrl(null);
     try {
       const res = await fetch("/api/poem-shorts/generate-image", {
-        method: "POST", headers: { "Content-Type": "application/json" },
+        method: "POST", headers: authHeaders(),
         body: JSON.stringify({ prompt: psImagePrompt, project_id: currentProjectId || "" }),
       });
       if (!res.ok) { setPsImageStatus({ status: "error", message: await res.text() }); return; }
@@ -835,7 +853,7 @@ export default function Home() {
     setPsVideoPromptStatus({ status: "generating", message: "영상 프롬프트 생성 중..." });
     try {
       const res = await fetch("/api/poem-shorts/generate-video-prompt", {
-        method: "POST", headers: { "Content-Type": "application/json" },
+        method: "POST", headers: authHeaders(),
         body: JSON.stringify({ poem_text: psPoem, image_prompt: psImagePrompt, project_id: currentProjectId || "", model: selectedModel }),
       });
       if (!res.ok) { setPsVideoPromptStatus({ status: "error", message: await res.text() }); return; }
@@ -860,7 +878,7 @@ export default function Home() {
     setPsVideoUrl(null);
     try {
       const res = await fetch("/api/poem-shorts/generate-video", {
-        method: "POST", headers: { "Content-Type": "application/json" },
+        method: "POST", headers: authHeaders(),
         body: JSON.stringify({ project_id: currentProjectId }),
       });
       if (!res.ok) { setPsVideoStatus({ status: "error", message: await res.text() }); return; }
@@ -1568,7 +1586,7 @@ export default function Home() {
       dlAbortRef.current = ctrl;
       const res = await fetch("/api/download-audio", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders(),
         body: JSON.stringify({ url: dlUrl, filename: dlFilename || null, project_id: currentProjectId || null }),
         signal: ctrl.signal,
       });
@@ -2125,7 +2143,7 @@ export default function Home() {
       if (currentProjectId) body.project_id = currentProjectId;
 
       try {
-        const res = await fetch("/api/generate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+        const res = await fetch("/api/generate", { method: "POST", headers: authHeaders(), body: JSON.stringify(body) });
         if (!res.ok) {
           const errText = await res.text().catch(() => "Request failed");
           setBatchStatus((prev) => {
@@ -2223,7 +2241,7 @@ export default function Home() {
     addDebug(`POST /api/generate → ${JSON.stringify(body).slice(0, 300)}`);
     const t0 = Date.now();
     try {
-      const res = await fetch("/api/generate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal: controller.signal });
+      const res = await fetch("/api/generate", { method: "POST", headers: authHeaders(), body: JSON.stringify(body), signal: controller.signal });
       addDebug(`Response: ${res.status} ${res.statusText} (${Date.now() - t0}ms)`);
       if (!res.ok) {
         const errText = await res.text().catch(() => "Request failed");
@@ -2364,7 +2382,7 @@ export default function Home() {
     const controller = new AbortController(); rewriteAbortRef.current = controller;
     setRewriteStatus({ status: "rewriting", message: "박완서 문체로 변환 중..." }); setRewrittenText("");
     try {
-      const res = await fetch("/api/rewrite", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: editorText.trim(), model: selectedModel }), signal: controller.signal });
+      const res = await fetch("/api/rewrite", { method: "POST", headers: authHeaders(), body: JSON.stringify({ text: editorText.trim(), model: selectedModel }), signal: controller.signal });
       if (!res.ok) { const err = await res.json().catch(() => ({ detail: "요청 실패" })); setRewriteStatus({ status: "error", message: err.detail || "요청 실패" }); return; }
       await readSSE(res, (event) => {
         if (event.status === "complete") {
@@ -2395,7 +2413,7 @@ export default function Home() {
     const controller = new AbortController(); rewriteAbortRef.current = controller;
     setRewriteStatus({ status: "rewriting", message: "오타 수정 중..." }); setRewrittenText("");
     try {
-      const res = await fetch("/api/fix-typos", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: editorText.trim(), model: selectedModel }), signal: controller.signal });
+      const res = await fetch("/api/fix-typos", { method: "POST", headers: authHeaders(), body: JSON.stringify({ text: editorText.trim(), model: selectedModel }), signal: controller.signal });
       if (!res.ok) { const err = await res.json().catch(() => ({ detail: "요청 실패" })); setRewriteStatus({ status: "error", message: err.detail || "요청 실패" }); return; }
       await readSSE(res, (event) => {
         if (event.status === "complete") {
@@ -2435,7 +2453,13 @@ export default function Home() {
               <span className="text-sm text-gray-300">
                 <svg className="inline w-4 h-4 mr-1 -mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
                 <span className="font-medium text-white">{authUser.username}</span>
-                {authUser.role === "admin" && <span className="ml-1 text-xs text-accent-400">(admin)</span>}
+                {authUser.role === "admin" ? (
+                  <span className="ml-1 text-xs text-accent-400">(admin)</span>
+                ) : (
+                  <span className={`ml-2 text-xs font-medium px-2 py-0.5 rounded-full ${(authUser.quota_remaining_krw ?? 250) > 50 ? "bg-green-500/20 text-green-400" : (authUser.quota_remaining_krw ?? 0) > 0 ? "bg-yellow-500/20 text-yellow-400" : "bg-red-500/20 text-red-400"}`}>
+                    잔여 ₩{Math.round(authUser.quota_remaining_krw ?? 250).toLocaleString()} / 250
+                  </span>
+                )}
               </span>
               <button onClick={handleSignout} className="text-sm text-gray-400 hover:text-red-400 transition-colors">로그아웃</button>
             </div>
@@ -2967,7 +2991,7 @@ Batch mode: paste multiple stories with tags:
                   try {
                     const res = await fetch("/api/generate-infographic", {
                       method: "POST",
-                      headers: { "Content-Type": "application/json" },
+                      headers: authHeaders(),
                       body: JSON.stringify({ prompt: infoPrompt, project_id: currentProjectId || "" }),
                       signal: controller.signal,
                     });

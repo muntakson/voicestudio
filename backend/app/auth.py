@@ -1,8 +1,9 @@
-"""Simple JWT-based authentication."""
+"""Simple JWT-based authentication and daily quota."""
 
 import hashlib
 import os
 import time
+from datetime import date
 from typing import Optional
 
 import jwt
@@ -13,6 +14,9 @@ from app.database import get_db
 SECRET_KEY = os.environ.get("AUTH_SECRET", "voicestudio-secret-key-2026")
 ALGORITHM = "HS256"
 TOKEN_EXPIRE = 60 * 60 * 24 * 30  # 30 days
+
+DAILY_QUOTA_KRW = 250
+KRW_PER_USD = 1380
 
 
 def _hash_pw(password: str) -> str:
@@ -28,6 +32,21 @@ def init_users():
             role TEXT NOT NULL DEFAULT 'user',
             created_at TEXT NOT NULL
         )
+    """)
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS daily_usage (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT NOT NULL,
+            usage_date TEXT NOT NULL,
+            service TEXT NOT NULL,
+            cost_usd REAL NOT NULL DEFAULT 0,
+            cost_krw REAL NOT NULL DEFAULT 0,
+            detail TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+    """)
+    db.execute("""
+        CREATE INDEX IF NOT EXISTS idx_usage_user_date ON daily_usage(username, usage_date)
     """)
     db.commit()
     existing = db.execute("SELECT username FROM users").fetchall()
@@ -56,7 +75,8 @@ def signup(username: str, password: str) -> dict:
     )
     db.commit()
     token = _create_token(username, "user")
-    return {"username": username, "role": "user", "token": token}
+    remaining = get_remaining_quota(username)
+    return {"username": username, "role": "user", "token": token, "quota_remaining_krw": remaining}
 
 
 def signin(username: str, password: str) -> dict:
@@ -65,7 +85,8 @@ def signin(username: str, password: str) -> dict:
     if not row or row["password_hash"] != _hash_pw(password):
         raise HTTPException(status_code=401, detail="Invalid username or password")
     token = _create_token(row["username"], row["role"])
-    return {"username": row["username"], "role": row["role"], "token": token}
+    remaining = get_remaining_quota(row["username"]) if row["role"] != "admin" else -1
+    return {"username": row["username"], "role": row["role"], "token": token, "quota_remaining_krw": remaining}
 
 
 def _create_token(username: str, role: str) -> str:
@@ -101,3 +122,49 @@ def assign_orphan_projects():
         db.execute("ALTER TABLE projects ADD COLUMN owner TEXT DEFAULT 'admin'")
     db.execute("UPDATE projects SET owner = 'admin' WHERE owner IS NULL OR owner = ''")
     db.commit()
+
+
+# ---------------------------------------------------------------------------
+# Quota
+# ---------------------------------------------------------------------------
+
+def get_today_usage_krw(username: str) -> float:
+    db = get_db()
+    today = date.today().isoformat()
+    row = db.execute(
+        "SELECT COALESCE(SUM(cost_krw), 0) as total FROM daily_usage WHERE username = ? AND usage_date = ?",
+        (username, today),
+    ).fetchone()
+    return row["total"] if row else 0
+
+
+def get_remaining_quota(username: str) -> float:
+    used = get_today_usage_krw(username)
+    return round(DAILY_QUOTA_KRW - used, 2)
+
+
+def record_usage(username: str, service: str, cost_usd: float, detail: str = ""):
+    cost_krw = round(cost_usd * KRW_PER_USD, 2)
+    db = get_db()
+    today = date.today().isoformat()
+    db.execute(
+        "INSERT INTO daily_usage (username, usage_date, service, cost_usd, cost_krw, detail) VALUES (?, ?, ?, ?, ?, ?)",
+        (username, today, service, round(cost_usd, 6), cost_krw, detail),
+    )
+    db.commit()
+
+
+def check_quota(user: Optional[dict], estimated_cost_usd: float = 0) -> Optional[dict]:
+    """Check if user has enough quota. Returns user dict or raises 429."""
+    if not user:
+        return None
+    if user["role"] == "admin":
+        return user
+    remaining = get_remaining_quota(user["username"])
+    estimated_krw = estimated_cost_usd * KRW_PER_USD
+    if remaining <= 0:
+        raise HTTPException(
+            status_code=429,
+            detail=f"일일 사용량 한도 초과 (₩{DAILY_QUOTA_KRW}/일). 내일 다시 시도해주세요. Daily quota exceeded."
+        )
+    return user

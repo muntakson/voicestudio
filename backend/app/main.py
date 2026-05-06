@@ -33,7 +33,10 @@ from app.models import (
     AudioDownloadRequest, GenerateRequest, HealthResponse, ProjectCreate,
     ProjectUpdate, RewriteRequest, VoiceInfo, VoiceListResponse,
 )
-from app.auth import init_users, signup, signin, get_current_user, require_auth, assign_orphan_projects
+from app.auth import (
+    init_users, signup, signin, get_current_user, require_auth, assign_orphan_projects,
+    check_quota, record_usage, get_remaining_quota, DAILY_QUOTA_KRW,
+)
 from app.elevenlabs_service import elevenlabs_service
 from app.tts_service import tts_service, OUTPUTS_DIR, UPLOADS_DIR, ALLOWED_AUDIO_EXTENSIONS
 
@@ -89,7 +92,15 @@ async def api_signin(body: _AuthBody):
 
 @app.get("/api/auth/me")
 async def api_auth_me(user: dict = fastapi.Depends(require_auth)):
-    return {"username": user["username"], "role": user["role"]}
+    remaining = get_remaining_quota(user["username"]) if user["role"] != "admin" else -1
+    return {"username": user["username"], "role": user["role"], "quota_remaining_krw": remaining, "quota_limit_krw": DAILY_QUOTA_KRW}
+
+@app.get("/api/quota")
+async def api_quota(user: dict = fastapi.Depends(require_auth)):
+    if user["role"] == "admin":
+        return {"unlimited": True, "remaining_krw": -1, "limit_krw": DAILY_QUOTA_KRW}
+    remaining = get_remaining_quota(user["username"])
+    return {"unlimited": False, "remaining_krw": remaining, "used_krw": round(DAILY_QUOTA_KRW - remaining, 2), "limit_krw": DAILY_QUOTA_KRW}
 
 
 # ---------------------------------------------------------------------------
@@ -148,7 +159,9 @@ async def upload_voice(
 # ---------------------------------------------------------------------------
 
 @app.post("/api/generate")
-async def generate_audio(req: GenerateRequest):
+async def generate_audio(req: GenerateRequest, user: dict | None = fastapi.Depends(get_current_user)):
+    if req.engine == "elevenlabs" and user and user["role"] != "admin":
+        check_quota(user)
     async def event_stream() -> AsyncGenerator[str, None]:
         try:
             if req.engine == "elevenlabs":
@@ -177,13 +190,17 @@ async def generate_audio(req: GenerateRequest):
                                    tts_engine="elevenlabs",
                                    tts_model="eleven_flash_v2_5",
                                    tts_text_chars=result.get("text_chars", 0))
+                text_chars = result.get("text_chars", len(req.text))
+                cost_usd = text_chars * 0.00030
+                if user and user["role"] != "admin":
+                    record_usage(user["username"], "elevenlabs_tts", cost_usd, f"{text_chars} chars")
                 yield _sse({
                     "status": "complete",
                     "audio_url": f"/api/outputs/{out_fname}",
                     "duration": result["duration"],
                     "generation_time": result["generation_time"],
                     "engine": "elevenlabs",
-                    "text_chars": result.get("text_chars", 0),
+                    "text_chars": text_chars,
                 })
             else:
                 if not tts_service.is_loaded:
@@ -1018,7 +1035,9 @@ def _call_llm(model: str, system_prompt: str, user_text: str, temperature: float
 
 
 @app.post("/api/fix-typos")
-async def fix_typos(req: RewriteRequest):
+async def fix_typos(req: RewriteRequest, user: dict | None = fastapi.Depends(get_current_user)):
+    if user and user["role"] != "admin":
+        check_quota(user)
     async def event_stream() -> AsyncGenerator[str, None]:
         try:
             yield _sse({"status": "fixing", "message": "오타 수정 중..."})
@@ -1026,6 +1045,12 @@ async def fix_typos(req: RewriteRequest):
             t0 = time.time()
             result = await loop.run_in_executor(None, lambda: _call_llm(req.model, FIX_TYPOS_SYSTEM_PROMPT, req.text, 0.2))
             elapsed = round(time.time() - t0, 2)
+            if user and user["role"] != "admin":
+                from app.auth import KRW_PER_USD
+                rates = {"claude-sonnet-4-6": (3.0, 15.0), "qwen/qwen3-32b": (0.29, 0.39), "llama-3.3-70b-versatile": (0.59, 0.79), "llama-3.1-8b-instant": (0.05, 0.08)}
+                r = rates.get(req.model, (0, 0))
+                cost = (result["input_tokens"] * r[0] + result["output_tokens"] * r[1]) / 1_000_000
+                record_usage(user["username"], "fix_typos", cost, f"{req.model} {result['input_tokens']}+{result['output_tokens']} tokens")
             yield _sse({
                 "status": "complete", "fixed_text": result["text"],
                 "input_tokens": result["input_tokens"],
@@ -1040,7 +1065,9 @@ async def fix_typos(req: RewriteRequest):
 
 
 @app.post("/api/rewrite")
-async def rewrite_text(req: RewriteRequest):
+async def rewrite_text(req: RewriteRequest, user: dict | None = fastapi.Depends(get_current_user)):
+    if user and user["role"] != "admin":
+        check_quota(user)
     async def event_stream() -> AsyncGenerator[str, None]:
         try:
             yield _sse({"status": "rewriting", "message": "박완서 문체로 변환 중..."})
@@ -1048,6 +1075,11 @@ async def rewrite_text(req: RewriteRequest):
             t0 = time.time()
             result = await loop.run_in_executor(None, lambda: _call_llm(req.model, REWRITE_SYSTEM_PROMPT, req.text, 0.7))
             elapsed = round(time.time() - t0, 2)
+            if user and user["role"] != "admin":
+                rates = {"claude-sonnet-4-6": (3.0, 15.0), "qwen/qwen3-32b": (0.29, 0.39), "llama-3.3-70b-versatile": (0.59, 0.79), "llama-3.1-8b-instant": (0.05, 0.08)}
+                r = rates.get(req.model, (0, 0))
+                cost = (result["input_tokens"] * r[0] + result["output_tokens"] * r[1]) / 1_000_000
+                record_usage(user["username"], "rewrite", cost, f"{req.model} {result['input_tokens']}+{result['output_tokens']} tokens")
             yield _sse({
                 "status": "complete", "rewritten_text": result["text"],
                 "input_tokens": result["input_tokens"],
@@ -1179,7 +1211,9 @@ def _generate_gemini_image(prompt: str, api_key: str, preferred_model: str | Non
 
 
 @app.post("/api/generate-infographic")
-async def generate_infographic(req: dict = fastapi.Body(...)):
+async def generate_infographic(req: dict = fastapi.Body(...), user: dict | None = fastapi.Depends(get_current_user)):
+    if user and user["role"] != "admin":
+        check_quota(user)
     prompt = req.get("prompt", "").strip()
     project_id = req.get("project_id", "")
     if not prompt:
@@ -1226,6 +1260,8 @@ async def generate_infographic(req: dict = fastapi.Body(...)):
                 f.write(image_bytes)
 
             logger.info("Generated infographic '%s' with %s in %.1fs (%d bytes)", fname, used_model, elapsed, len(image_bytes))
+            if user and user["role"] != "admin":
+                record_usage(user["username"], "infographic", 0.02, f"{used_model}")
             yield _sse({
                 "status": "complete",
                 "image_url": f"/api/infographics/{fname}",
@@ -1424,7 +1460,9 @@ async def poem_shorts_generate_audio(req: dict = fastapi.Body(...)):
 
 
 @app.post("/api/poem-shorts/generate-image-prompt")
-async def poem_shorts_generate_image_prompt(req: dict = fastapi.Body(...)):
+async def poem_shorts_generate_image_prompt(req: dict = fastapi.Body(...), user: dict | None = fastapi.Depends(get_current_user)):
+    if user and user["role"] != "admin":
+        check_quota(user)
     poem_text = req.get("poem_text", "").strip()
     model = req.get("model", "claude-sonnet-4-6")
     project_id = req.get("project_id", "")
@@ -1453,6 +1491,11 @@ async def poem_shorts_generate_image_prompt(req: dict = fastapi.Body(...)):
                     "output_tokens": result["output_tokens"],
                 })
 
+            if user and user["role"] != "admin":
+                rates = {"claude-sonnet-4-6": (3.0, 15.0), "qwen/qwen3-32b": (0.29, 0.39), "llama-3.3-70b-versatile": (0.59, 0.79), "llama-3.1-8b-instant": (0.05, 0.08)}
+                r = rates.get(model, (0, 0))
+                cost = (result["input_tokens"] * r[0] + result["output_tokens"] * r[1]) / 1_000_000
+                record_usage(user["username"], "poem_image_prompt", cost, f"{model} {result['input_tokens']}+{result['output_tokens']} tokens")
             yield _sse({
                 "status": "complete", "prompt": prompt,
                 "input_tokens": result["input_tokens"],
@@ -1468,7 +1511,9 @@ async def poem_shorts_generate_image_prompt(req: dict = fastapi.Body(...)):
 
 
 @app.post("/api/poem-shorts/generate-image")
-async def poem_shorts_generate_image(req: dict = fastapi.Body(...)):
+async def poem_shorts_generate_image(req: dict = fastapi.Body(...), user: dict | None = fastapi.Depends(get_current_user)):
+    if user and user["role"] != "admin":
+        check_quota(user)
     prompt = req.get("prompt", "").strip()
     project_id = req.get("project_id", "")
     if not prompt:
@@ -1514,6 +1559,8 @@ async def poem_shorts_generate_image(req: dict = fastapi.Body(...)):
                 })
 
             logger.info("Poem background image '%s' with %s in %.1fs (%d bytes)", fname, used_model, elapsed, len(image_bytes))
+            if user and user["role"] != "admin":
+                record_usage(user["username"], "poem_image", 0.02, f"{used_model}")
             yield _sse({
                 "status": "complete",
                 "image_url": f"/api/infographics/{fname}",
@@ -1531,7 +1578,9 @@ async def poem_shorts_generate_image(req: dict = fastapi.Body(...)):
 
 
 @app.post("/api/poem-shorts/generate-video-prompt")
-async def poem_shorts_generate_video_prompt(req: dict = fastapi.Body(...)):
+async def poem_shorts_generate_video_prompt(req: dict = fastapi.Body(...), user: dict | None = fastapi.Depends(get_current_user)):
+    if user and user["role"] != "admin":
+        check_quota(user)
     poem_text = req.get("poem_text", "").strip()
     image_prompt = req.get("image_prompt", "")
     model = req.get("model", "claude-sonnet-4-6")
@@ -1565,6 +1614,11 @@ async def poem_shorts_generate_video_prompt(req: dict = fastapi.Body(...)):
                     "output_tokens": result["output_tokens"],
                 })
 
+            if user and user["role"] != "admin":
+                rates = {"claude-sonnet-4-6": (3.0, 15.0), "qwen/qwen3-32b": (0.29, 0.39), "llama-3.3-70b-versatile": (0.59, 0.79), "llama-3.1-8b-instant": (0.05, 0.08)}
+                r = rates.get(model, (0, 0))
+                cost = (result["input_tokens"] * r[0] + result["output_tokens"] * r[1]) / 1_000_000
+                record_usage(user["username"], "poem_video_prompt", cost, f"{model} {result['input_tokens']}+{result['output_tokens']} tokens")
             yield _sse({
                 "status": "complete", "prompt": prompt,
                 "input_tokens": result["input_tokens"],
