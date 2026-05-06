@@ -92,3 +92,4 @@ class ProjectUpdate(BaseModel):
     poem_video_filename: Optional[str] = None
     poem_gen_elapsed: Optional[float] = None
     poem_gen_summary: Optional[str] = None
+    category_id: Optional[int] = None

@@ -29,6 +29,7 @@ interface Project {
   poem_image_prompt: string | null; poem_image_filename: string | null;
   poem_video_prompt: string | null; poem_video_filename: string | null; poem_gen_elapsed: number;
   poem_gen_summary: string | null;
+  category_id: number | null; category_name: string | null;
 }
 
 interface AudioFileInfo { filename: string; size: number; modified?: string; original_name?: string; file_type?: string; created_at?: string; }
@@ -381,6 +382,96 @@ export default function Home() {
   const [expandedTranscripts, setExpandedTranscripts] = useState<Set<string>>(new Set());
   const [expandedRewrites, setExpandedRewrites] = useState<Set<string>>(new Set());
   const [expandedSummary, setExpandedSummary] = useState<Set<string>>(new Set());
+
+  /* ---- Admin dashboard state ---- */
+  const [showAdminDashboard, setShowAdminDashboard] = useState(false);
+  const [adminCategories, setAdminCategories] = useState<{id: number; name: string; created_at: string}[]>([]);
+  const [adminProjects, setAdminProjects] = useState<Project[]>([]);
+  const [newCatName, setNewCatName] = useState("");
+  const [editCatId, setEditCatId] = useState<number | null>(null);
+  const [editCatName, setEditCatName] = useState("");
+
+  const fetchAdminData = useCallback(async () => {
+    if (!authUser?.token || authUser.role !== "admin") return;
+    const h = { Authorization: `Bearer ${authUser.token}` };
+    const [catRes, projRes] = await Promise.all([
+      fetch("/api/categories"),
+      fetch("/api/projects", { headers: h }),
+    ]);
+    if (catRes.ok) setAdminCategories(await catRes.json());
+    if (projRes.ok) setAdminProjects(await projRes.json());
+  }, [authUser?.token, authUser?.role]);
+
+  const handleCreateCategory = async () => {
+    if (!newCatName.trim()) return;
+    const res = await fetch("/api/categories", {
+      method: "POST", headers: authHeaders(),
+      body: JSON.stringify({ name: newCatName.trim() }),
+    });
+    if (res.ok) { setNewCatName(""); fetchAdminData(); }
+  };
+
+  const handleUpdateCategory = async (id: number, name: string) => {
+    if (!name.trim()) return;
+    await fetch(`/api/categories/${id}`, {
+      method: "PATCH", headers: authHeaders(),
+      body: JSON.stringify({ name: name.trim() }),
+    });
+    setEditCatId(null);
+    fetchAdminData();
+  };
+
+  const handleDeleteCategory = async (id: number) => {
+    if (!confirm("이 카테고리를 삭제하시겠습니까?")) return;
+    await fetch(`/api/categories/${id}`, { method: "DELETE", headers: authHeaders() });
+    fetchAdminData();
+  };
+
+  const handleProjectCategoryChange = async (projectId: string, categoryId: number | null) => {
+    await fetch(`/api/projects/${projectId}`, {
+      method: "PATCH", headers: authHeaders(),
+      body: JSON.stringify({ category_id: categoryId }),
+    });
+    fetchAdminData();
+    fetchProjects();
+  };
+
+  /* ---- Project edit modal state (admin) ---- */
+  const [editProject, setEditProject] = useState<Project | null>(null);
+  const [editProjectName, setEditProjectName] = useState("");
+  const [editProjectCatId, setEditProjectCatId] = useState<number | null>(null);
+  const [editProjectArtifacts, setEditProjectArtifacts] = useState<{filename: string; label: string; artifact_type: string; file_size: number; created_at: string}[]>([]);
+  const [editProjectAudios, setEditProjectAudios] = useState<{filename: string; original_name: string; file_size: number; file_type: string; created_at: string}[]>([]);
+
+  const openEditProject = async (p: Project) => {
+    setEditProject(p);
+    setEditProjectName(p.name);
+    setEditProjectCatId(p.category_id);
+    const h = authHeaders();
+    const [artRes, audRes, catRes] = await Promise.all([
+      fetch(`/api/projects/${p.id}/artifacts`, { headers: h }),
+      fetch(`/api/projects/${p.id}/audio-files`, { headers: h }),
+      fetch("/api/categories"),
+    ]);
+    if (artRes.ok) setEditProjectArtifacts(await artRes.json());
+    if (audRes.ok) setEditProjectAudios(await audRes.json());
+    if (catRes.ok) setAdminCategories(await catRes.json());
+  };
+
+  const saveEditProject = async () => {
+    if (!editProject) return;
+    const updates: Record<string, unknown> = {};
+    if (editProjectName.trim() && editProjectName.trim() !== editProject.name) updates.name = editProjectName.trim();
+    if (editProjectCatId !== editProject.category_id) updates.category_id = editProjectCatId;
+    if (Object.keys(updates).length > 0) {
+      await fetch(`/api/projects/${editProject.id}`, {
+        method: "PATCH", headers: authHeaders(),
+        body: JSON.stringify(updates),
+      });
+    }
+    setEditProject(null);
+    fetchProjects();
+  };
 
   /* ---- Studio state ---- */
   const [activeTab, setActiveTab] = useState<"recorder" | "download" | "source" | "tts" | "infographic" | "poem-shorts" | "asr" | "editor" | "settings">("asr");
@@ -2461,6 +2552,14 @@ export default function Home() {
                   </span>
                 )}
               </span>
+              {authUser.role === "admin" && (
+                <button onClick={() => { setShowAdminDashboard(true); fetchAdminData(); }}
+                  className="flex items-center gap-1 rounded-lg border border-amber-500/40 bg-amber-500/10 px-2.5 py-1 text-sm font-medium text-amber-300 hover:bg-amber-500/25 transition-colors"
+                  title="관리자 대시보드">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+                  관리
+                </button>
+              )}
               <button onClick={handleSignout} className="text-sm text-gray-400 hover:text-red-400 transition-colors">로그아웃</button>
             </div>
           ) : (
@@ -2523,7 +2622,17 @@ export default function Home() {
                 <div className="mb-4 flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <h3 className="text-xl font-bold text-white leading-tight truncate">{p.name}</h3>
-                    <p className="mt-1 text-sm text-gray-300">{fmtDate(p.created_at)}</p>
+                    <div className="mt-1 flex items-center gap-2">
+                      <span className="text-sm text-gray-300">{fmtDate(p.created_at)}</span>
+                      {p.category_name && (
+                        <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                          p.category_name === "poem" ? "bg-pink-500/20 text-pink-300 ring-1 ring-pink-500/30" :
+                          p.category_name === "scifi" ? "bg-cyan-500/20 text-cyan-300 ring-1 ring-cyan-500/30" :
+                          p.category_name === "biography" ? "bg-amber-500/20 text-amber-300 ring-1 ring-amber-500/30" :
+                          "bg-gray-500/20 text-gray-300 ring-1 ring-gray-500/30"
+                        }`}>{p.category_name}</span>
+                      )}
+                    </div>
                   </div>
                   <span className={`shrink-0 rounded-full px-3 py-1 text-xs font-semibold tracking-wide uppercase ${
                     p.status === "created" ? "bg-slate-500/25 text-slate-200 ring-1 ring-slate-500/40" :
@@ -2688,6 +2797,11 @@ export default function Home() {
 
                 <div className="mt-auto flex gap-3 pt-4 border-t border-[#364153]">
                   <button className="btn-primary flex-1 text-base py-2.5" onClick={() => openProject(p.id)}>열기</button>
+                  {authUser?.role === "admin" && (
+                    <button className="inline-flex items-center justify-center rounded-lg border border-[#364153] bg-[#1e2939] px-4 py-2.5 text-gray-300 hover:bg-amber-500/15 hover:text-amber-300 hover:border-amber-500/30 transition-colors" title="편집" onClick={() => openEditProject(p)}>
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
+                    </button>
+                  )}
                   <button className="inline-flex items-center justify-center rounded-lg border border-[#364153] bg-[#1e2939] px-4 py-2.5 text-gray-300 hover:bg-red-500/15 hover:text-red-300 hover:border-red-500/30 transition-colors" onClick={() => deleteProject(p.id)}><TrashIcon /></button>
                 </div>
               </div>
@@ -2751,6 +2865,191 @@ export default function Home() {
                   <>이미 계정이 있으신가요? <button className="text-accent-400 hover:underline" onClick={() => { setAuthMode("signin"); setAuthError(""); }}>로그인</button></>
                 )}
               </p>
+            </div>
+          </div>
+        )}
+
+        {/* Admin Dashboard Modal */}
+        {showAdminDashboard && authUser?.role === "admin" && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setShowAdminDashboard(false)}>
+            <div className="card mx-4 w-full max-w-4xl max-h-[85vh] overflow-y-auto space-y-6" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center justify-between">
+                <h2 className="text-xl font-bold text-white">관리자 대시보드</h2>
+                <button onClick={() => setShowAdminDashboard(false)} className="text-gray-400 hover:text-white transition-colors">
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                </button>
+              </div>
+
+              {/* Category Management */}
+              <div className="rounded-xl border border-[#364153] bg-[#101828] p-4 space-y-3">
+                <h3 className="text-lg font-semibold text-amber-300">카테고리 관리</h3>
+                <div className="flex gap-2">
+                  <input type="text" className="input-field flex-1" placeholder="새 카테고리 이름"
+                    value={newCatName} onChange={(e) => setNewCatName(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && handleCreateCategory()} />
+                  <button className="btn-primary text-sm px-4" onClick={handleCreateCategory} disabled={!newCatName.trim()}>추가</button>
+                </div>
+                <div className="divide-y divide-[#364153]">
+                  {adminCategories.map((cat) => (
+                    <div key={cat.id} className="flex items-center justify-between py-2">
+                      {editCatId === cat.id ? (
+                        <div className="flex gap-2 flex-1 mr-2">
+                          <input type="text" className="input-field flex-1" value={editCatName}
+                            onChange={(e) => setEditCatName(e.target.value)}
+                            onKeyDown={(e) => e.key === "Enter" && handleUpdateCategory(cat.id, editCatName)}
+                            autoFocus />
+                          <button className="btn-primary text-sm px-3" onClick={() => handleUpdateCategory(cat.id, editCatName)}>저장</button>
+                          <button className="btn-secondary text-sm px-3" onClick={() => setEditCatId(null)}>취소</button>
+                        </div>
+                      ) : (
+                        <>
+                          <span className={`rounded-full px-3 py-1 text-sm font-medium ${
+                            cat.name === "poem" ? "bg-pink-500/20 text-pink-300" :
+                            cat.name === "scifi" ? "bg-cyan-500/20 text-cyan-300" :
+                            cat.name === "biography" ? "bg-amber-500/20 text-amber-300" :
+                            "bg-gray-500/20 text-gray-300"
+                          }`}>{cat.name}</span>
+                          <div className="flex gap-2">
+                            <button className="text-sm text-gray-400 hover:text-white transition-colors"
+                              onClick={() => { setEditCatId(cat.id); setEditCatName(cat.name); }}>수정</button>
+                            <button className="text-sm text-gray-400 hover:text-red-400 transition-colors"
+                              onClick={() => handleDeleteCategory(cat.id)}>삭제</button>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Project Category Assignment */}
+              <div className="rounded-xl border border-[#364153] bg-[#101828] p-4 space-y-3">
+                <h3 className="text-lg font-semibold text-sky-300">프로젝트 카테고리 배정</h3>
+                <div className="text-xs text-gray-400 mb-2">총 {adminProjects.length}개 프로젝트</div>
+                <div className="max-h-[400px] overflow-y-auto divide-y divide-[#364153]">
+                  {adminProjects.map((p) => (
+                    <div key={p.id} className="flex items-center justify-between py-2 gap-3">
+                      <div className="min-w-0 flex-1">
+                        <span className="text-sm font-medium text-white truncate block">{p.name}</span>
+                        <span className="text-xs text-gray-400">{p.owner || "admin"}</span>
+                      </div>
+                      <select
+                        className="rounded-lg border border-[#364153] bg-[#1e2939] px-3 py-1.5 text-sm text-white focus:border-accent-500 focus:ring-1 focus:ring-accent-500"
+                        value={p.category_id ?? ""}
+                        onChange={(e) => handleProjectCategoryChange(p.id, e.target.value ? Number(e.target.value) : null)}
+                      >
+                        <option value="">미분류</option>
+                        {adminCategories.map((cat) => (
+                          <option key={cat.id} value={cat.id}>{cat.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Edit Project Modal (admin) */}
+        {editProject && authUser?.role === "admin" && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setEditProject(null)}>
+            <div className="card mx-4 w-full max-w-2xl max-h-[85vh] overflow-y-auto space-y-5" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center justify-between">
+                <h2 className="text-lg font-bold text-white">프로젝트 편집</h2>
+                <button onClick={() => setEditProject(null)} className="text-gray-400 hover:text-white transition-colors">
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                </button>
+              </div>
+
+              {/* Project name */}
+              <div>
+                <label className="label">프로젝트 이름</label>
+                <input type="text" className="input-field" value={editProjectName}
+                  onChange={(e) => setEditProjectName(e.target.value)} />
+              </div>
+
+              {/* Category */}
+              <div>
+                <label className="label">카테고리</label>
+                <select className="input-field" value={editProjectCatId ?? ""}
+                  onChange={(e) => setEditProjectCatId(e.target.value ? Number(e.target.value) : null)}>
+                  <option value="">미분류</option>
+                  {adminCategories.map((cat) => (
+                    <option key={cat.id} value={cat.id}>{cat.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Info */}
+              <div className="rounded-lg border border-[#364153] bg-[#101828] p-3 space-y-1 text-sm">
+                <div className="flex justify-between"><span className="text-gray-400">ID</span><span className="text-gray-300 font-mono text-xs">{editProject.id}</span></div>
+                <div className="flex justify-between"><span className="text-gray-400">소유자</span><span className="text-gray-300">{editProject.owner || "admin"}</span></div>
+                <div className="flex justify-between"><span className="text-gray-400">상태</span><span className="text-gray-300">{editProject.status}</span></div>
+                <div className="flex justify-between"><span className="text-gray-400">생성일</span><span className="text-gray-300">{fmtDate(editProject.created_at)}</span></div>
+                {editProject.total_cost > 0 && (
+                  <div className="flex justify-between"><span className="text-gray-400">총 비용</span><span className="text-amber-300 font-medium">${editProject.total_cost.toFixed(4)}</span></div>
+                )}
+              </div>
+
+              {/* Audio files */}
+              {editProjectAudios.length > 0 && (
+                <div>
+                  <h3 className="text-sm font-semibold text-sky-300 mb-2">오디오 파일 ({editProjectAudios.length})</h3>
+                  <div className="rounded-lg border border-[#364153] bg-[#101828] divide-y divide-[#364153]">
+                    {editProjectAudios.map((a) => (
+                      <div key={a.filename} className="px-3 py-2 flex items-center justify-between gap-2">
+                        <div className="min-w-0 flex-1">
+                          <span className="text-sm text-white truncate block">{a.original_name || a.filename}</span>
+                          <span className="text-xs text-gray-400">{a.file_type} · {fmtSize(a.file_size)}</span>
+                        </div>
+                        <a href={`/api/${a.file_type === "output" ? "outputs" : "audio-files"}/${a.filename}`}
+                          target="_blank" rel="noopener noreferrer"
+                          className="text-xs text-accent-400 hover:text-accent-300 shrink-0">다운로드</a>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Artifacts */}
+              {editProjectArtifacts.length > 0 && (
+                <div>
+                  <h3 className="text-sm font-semibold text-violet-300 mb-2">아티팩트 ({editProjectArtifacts.length})</h3>
+                  <div className="rounded-lg border border-[#364153] bg-[#101828] divide-y divide-[#364153]">
+                    {editProjectArtifacts.map((a) => (
+                      <div key={a.filename} className="px-3 py-2 flex items-center justify-between gap-2">
+                        <div className="min-w-0 flex-1">
+                          <span className="text-sm text-white truncate block">{a.label}</span>
+                          <span className="text-xs text-gray-400">{a.filename} · {fmtSize(a.file_size)}</span>
+                        </div>
+                        <a href={`/api/artifacts/${a.filename}`}
+                          target="_blank" rel="noopener noreferrer"
+                          className="text-xs text-accent-400 hover:text-accent-300 shrink-0">다운로드</a>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Text previews */}
+              {editProject.transcript_text && (
+                <div>
+                  <h3 className="text-sm font-semibold text-sky-300 mb-1">원본 전사 ({editProject.transcript_text.length.toLocaleString()}자)</h3>
+                  <div className="max-h-[120px] overflow-y-auto rounded-lg border border-[#364153] bg-[#101828] px-3 py-2 text-sm text-gray-300 whitespace-pre-wrap">{editProject.transcript_text}</div>
+                </div>
+              )}
+              {editProject.rewritten_text && (
+                <div>
+                  <h3 className="text-sm font-semibold text-violet-300 mb-1">변환 텍스트 ({editProject.rewritten_text.length.toLocaleString()}자)</h3>
+                  <div className="max-h-[120px] overflow-y-auto rounded-lg border border-[#364153] bg-[#101828] px-3 py-2 text-sm text-gray-300 whitespace-pre-wrap">{editProject.rewritten_text}</div>
+                </div>
+              )}
+
+              <div className="flex gap-3 pt-2">
+                <button className="btn-secondary flex-1" onClick={() => setEditProject(null)}>취소</button>
+                <button className="btn-primary flex-1" onClick={saveEditProject}>저장</button>
+              </div>
             </div>
           </div>
         )}

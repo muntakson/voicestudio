@@ -28,6 +28,13 @@ def get_db() -> sqlite3.Connection:
 def init_db():
     db = get_db()
     db.execute("""
+        CREATE TABLE IF NOT EXISTS categories (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+    """)
+    db.execute("""
         CREATE TABLE IF NOT EXISTS project_audio_files (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             project_id TEXT NOT NULL,
@@ -147,6 +154,7 @@ def _migrate(db: sqlite3.Connection):
         ("poem_video_filename", "TEXT"),
         ("poem_gen_elapsed", "REAL DEFAULT 0"),
         ("poem_gen_summary", "TEXT"),
+        ("category_id", "INTEGER"),
     ]
     for col_name, col_def in new_cols:
         if col_name not in existing:
@@ -155,13 +163,18 @@ def _migrate(db: sqlite3.Connection):
 
 def list_projects() -> list[dict]:
     db = get_db()
-    rows = db.execute("SELECT * FROM projects ORDER BY created_at DESC").fetchall()
+    rows = db.execute(
+        "SELECT p.*, c.name AS category_name FROM projects p LEFT JOIN categories c ON p.category_id = c.id ORDER BY p.created_at DESC"
+    ).fetchall()
     return [dict(r) for r in rows]
 
 
 def get_project(project_id: str) -> dict | None:
     db = get_db()
-    row = db.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
+    row = db.execute(
+        "SELECT p.*, c.name AS category_name FROM projects p LEFT JOIN categories c ON p.category_id = c.id WHERE p.id = ?",
+        (project_id,),
+    ).fetchone()
     return dict(row) if row else None
 
 
@@ -190,6 +203,7 @@ _ALLOWED_FIELDS = {
     "poem_image_prompt", "poem_image_filename",
     "poem_video_prompt", "poem_video_filename", "poem_gen_elapsed",
     "poem_gen_summary",
+    "category_id",
 }
 
 
@@ -270,4 +284,77 @@ def list_project_artifacts(project_id: str) -> list[dict]:
 def delete_project_artifacts(project_id: str):
     db = get_db()
     db.execute("DELETE FROM project_artifacts WHERE project_id = ?", (project_id,))
+    db.commit()
+
+
+# ---------------------------------------------------------------------------
+# Category CRUD
+# ---------------------------------------------------------------------------
+
+def list_categories() -> list[dict]:
+    db = get_db()
+    rows = db.execute("SELECT * FROM categories ORDER BY id").fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_category(category_id: int) -> dict | None:
+    db = get_db()
+    row = db.execute("SELECT * FROM categories WHERE id = ?", (category_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def create_category(name: str) -> dict:
+    db = get_db()
+    db.execute("INSERT INTO categories (name) VALUES (?)", (name,))
+    db.commit()
+    row = db.execute("SELECT * FROM categories WHERE name = ?", (name,)).fetchone()
+    return dict(row)
+
+
+def update_category(category_id: int, name: str) -> dict | None:
+    db = get_db()
+    db.execute("UPDATE categories SET name = ? WHERE id = ?", (name, category_id))
+    db.commit()
+    return get_category(category_id)
+
+
+def delete_category(category_id: int) -> bool:
+    db = get_db()
+    db.execute("UPDATE projects SET category_id = NULL WHERE category_id = ?", (category_id,))
+    cursor = db.execute("DELETE FROM categories WHERE id = ?", (category_id,))
+    db.commit()
+    return cursor.rowcount > 0
+
+
+def init_categories():
+    db = get_db()
+    for name in ("poem", "scifi", "biography"):
+        existing = db.execute("SELECT id FROM categories WHERE name = ?", (name,)).fetchone()
+        if not existing:
+            db.execute("INSERT INTO categories (name) VALUES (?)", (name,))
+    db.commit()
+
+    cats = {r["name"]: r["id"] for r in db.execute("SELECT id, name FROM categories").fetchall()}
+
+    biography_id = cats.get("biography")
+    poem_id = cats.get("poem")
+    scifi_id = cats.get("scifi")
+
+    if biography_id:
+        db.execute("UPDATE projects SET category_id = ? WHERE category_id IS NULL AND name LIKE '%자서전%'", (biography_id,))
+    if poem_id:
+        db.execute(
+            "UPDATE projects SET category_id = ? WHERE category_id IS NULL AND ("
+            "name LIKE '%시 %' OR name LIKE '%시모음%' OR name LIKE '%시인%' "
+            "OR name LIKE '%님의침묵%' OR name LIKE '%한용운 시%' OR name LIKE '%시 낭%'"
+            ")",
+            (poem_id,),
+        )
+    if scifi_id:
+        db.execute(
+            "UPDATE projects SET category_id = ? WHERE category_id IS NULL AND ("
+            "name LIKE '%투단이%' OR name LIKE '%코딩%포%로%' OR name LIKE '%오파프%'"
+            ")",
+            (scifi_id,),
+        )
     db.commit()

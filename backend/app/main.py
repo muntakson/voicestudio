@@ -27,6 +27,8 @@ from app.database import (
     init_db, list_projects, get_project, create_project,
     update_project, delete_project, add_project_audio,
     list_project_audio, upsert_project_artifact, list_project_artifacts,
+    list_categories, get_category, create_category, update_category, delete_category,
+    init_categories,
     AUDIO_FILES_DIR, ARTIFACTS_DIR,
 )
 from app.models import (
@@ -50,6 +52,7 @@ async def lifespan(app: FastAPI):
     init_db()
     init_users()
     assign_orphan_projects()
+    init_categories()
     logger.info("Database initialized.")
     tts_service.load_model()
     logger.info("Model ready. Accepting requests.")
@@ -101,6 +104,47 @@ async def api_quota(user: dict = fastapi.Depends(require_auth)):
         return {"unlimited": True, "remaining_krw": -1, "limit_krw": DAILY_QUOTA_KRW}
     remaining = get_remaining_quota(user["username"])
     return {"unlimited": False, "remaining_krw": remaining, "used_krw": round(DAILY_QUOTA_KRW - remaining, 2), "limit_krw": DAILY_QUOTA_KRW}
+
+
+# ---------------------------------------------------------------------------
+# Category Routes (admin only for CUD)
+# ---------------------------------------------------------------------------
+
+@app.get("/api/categories")
+async def api_list_categories():
+    return list_categories()
+
+@app.post("/api/categories")
+async def api_create_category(body: dict = fastapi.Body(...), user: dict = fastapi.Depends(require_auth)):
+    if user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+    name = body.get("name", "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Name is required")
+    try:
+        return create_category(name)
+    except Exception:
+        raise HTTPException(status_code=409, detail="Category already exists")
+
+@app.patch("/api/categories/{category_id}")
+async def api_update_category(category_id: int, body: dict = fastapi.Body(...), user: dict = fastapi.Depends(require_auth)):
+    if user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+    name = body.get("name", "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Name is required")
+    cat = update_category(category_id, name)
+    if not cat:
+        raise HTTPException(status_code=404, detail="Category not found")
+    return cat
+
+@app.delete("/api/categories/{category_id}")
+async def api_delete_category(category_id: int, user: dict = fastapi.Depends(require_auth)):
+    if user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+    if not delete_category(category_id):
+        raise HTTPException(status_code=404, detail="Category not found")
+    return {"ok": True}
 
 
 # ---------------------------------------------------------------------------
@@ -362,11 +406,18 @@ async def transcribe_audio(
 @app.get("/api/projects")
 async def api_list_projects(user: dict | None = fastapi.Depends(get_current_user)):
     all_projects = list_projects()
-    if not user:
+    if user and user["role"] == "admin":
         return all_projects
-    if user["role"] == "admin":
-        return all_projects
-    return [p for p in all_projects if p.get("owner") == user["username"]]
+    def visible(p: dict) -> bool:
+        cat = p.get("category_name")
+        if cat in ("poem", "scifi"):
+            return True
+        if cat == "biography":
+            return user is not None and p.get("owner") == user["username"]
+        if not user:
+            return False
+        return p.get("owner") == user["username"]
+    return [p for p in all_projects if visible(p)]
 
 
 @app.post("/api/projects")
