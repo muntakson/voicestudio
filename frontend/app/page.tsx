@@ -2811,8 +2811,8 @@ export default function Home() {
 
         <footer className="mt-12 border-t border-[#364153] pt-6 text-center text-sm text-gray-400 space-y-1">
           <p>오픈소스 오디오 자서전, 시낭독 영상 제작 소프트웨어</p>
-          <p>2026년 5월, Muntak Son. 소스코드 : <a href="https://github.com/muntakson/voicestudio" target="_blank" rel="noopener noreferrer" className="underline hover:text-[#a78bfa]">github.com/muntakson/voicestudio</a></p>
-          <p>제작목적 : AI 코딩 교육 &middot; mtshon@gmail.com</p>
+          <p>소스코드 : <a href="https://github.com/muntakson/voicestudio" target="_blank" rel="noopener noreferrer" className="underline hover:text-[#a78bfa]">github.com/muntakson/voicestudio</a></p>
+          <p>제작목적 : AI 코딩 교육</p>
         </footer>
 
         {/* New Project Modal */}
