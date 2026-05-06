@@ -4,7 +4,20 @@
 
 Open-source audiobook & poetry short-form video production software
 
-[voice.iotok.org](https://voice.iotok.org) | [GitHub](https://github.com/muntakson/voicestudio)
+[![Live Demo](https://img.shields.io/badge/Live%20Demo-voice.iotok.org-blue)](https://voice.iotok.org)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-green.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/Python-3.12-blue.svg)](https://python.org)
+[![Next.js](https://img.shields.io/badge/Next.js-14-black.svg)](https://nextjs.org)
+
+---
+
+## 스크린샷 | Screenshots
+
+| 프로젝트 목록 | 시 숏폼 영상 생성 | 음성인식 (ASR) |
+|:---:|:---:|:---:|
+| ![Project List](docs/screenshot-projects.png) | ![Poetry Shorts](docs/screenshot-poem-shorts.png) | ![ASR](docs/screenshot-asr-editor.png) |
+
+> [라이브 데모](https://voice.iotok.org)에서 직접 확인하세요.
 
 ---
 

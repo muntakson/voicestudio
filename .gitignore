@@ -29,6 +29,7 @@ frontend/tsconfig.tsbuildinfo
 
 # Images in root
 *.png
+!docs/*.png
 
 # Fonts
 *.otf
