@@ -227,21 +227,21 @@ function renderMarkdown(md: string) {
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     if (line.startsWith("## ")) {
-      elements.push(<h2 key={i} className="text-sm font-bold text-[#e8e4f0] mb-1">{line.slice(3)}</h2>);
+      elements.push(<h2 key={i} className="text-sm font-bold text-white mb-1">{line.slice(3)}</h2>);
     } else if (line.startsWith("### ")) {
       elements.push(<h3 key={i} className="text-xs font-semibold text-accent-400 mt-2 mb-0.5">{line.slice(4)}</h3>);
     } else if (line.startsWith("- ")) {
       const content = line.slice(2).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-      elements.push(<p key={i} className="text-[11px] text-[#a09bb5] pl-2" dangerouslySetInnerHTML={{ __html: `• ${content}` }} />);
+      elements.push(<p key={i} className="text-sm text-gray-300 pl-2" dangerouslySetInnerHTML={{ __html: `• ${content}` }} />);
     } else if (line.startsWith("---")) {
-      elements.push(<hr key={i} className="border-[#2e2845] my-1.5" />);
+      elements.push(<hr key={i} className="border-[#364153] my-1.5" />);
     } else if (line.startsWith("**")) {
-      const content = line.replace(/\*\*(.+?)\*\*/g, '<strong class="text-[#e8e4f0]">$1</strong>');
-      elements.push(<p key={i} className="text-xs text-[#a09bb5]" dangerouslySetInnerHTML={{ __html: content }} />);
+      const content = line.replace(/\*\*(.+?)\*\*/g, '<strong class="text-white">$1</strong>');
+      elements.push(<p key={i} className="text-sm text-gray-300" dangerouslySetInnerHTML={{ __html: content }} />);
     } else if (line.trim() === "") {
       continue;
     } else {
-      elements.push(<p key={i} className="text-[11px] text-[#a09bb5]">{line}</p>);
+      elements.push(<p key={i} className="text-sm text-gray-300">{line}</p>);
     }
   }
   return <>{elements}</>;
@@ -966,9 +966,9 @@ export default function Home() {
     if (!canvas || activeTab !== "recorder" || isRecording) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
-    ctx.fillStyle = "#1e1a2e";
+    ctx.fillStyle = "#1e2939";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.strokeStyle = "#2e2845";
+    ctx.strokeStyle = "#364153";
     ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.moveTo(0, canvas.height / 2);
@@ -1036,9 +1036,9 @@ export default function Home() {
           analyser.getByteTimeDomainData(dataArr);
           const w = canvas.width, h = canvas.height;
           if (ctx) {
-            ctx.fillStyle = "#1e1a2e";
+            ctx.fillStyle = "#1e2939";
             ctx.fillRect(0, 0, w, h);
-            ctx.strokeStyle = "#2e2845";
+            ctx.strokeStyle = "#364153";
             ctx.lineWidth = 1;
             ctx.beginPath();
             ctx.moveTo(0, h / 2);
@@ -1153,7 +1153,7 @@ export default function Home() {
     const curTime = audio ? audio.currentTime : 0;
     const sel = audSelRef.current;
 
-    ctx.fillStyle = "#1e1a2e";
+    ctx.fillStyle = "#1e2939";
     ctx.fillRect(0, 0, w, h);
     if (peaks.length === 0 || dur === 0) return;
 
@@ -1171,11 +1171,11 @@ export default function Home() {
     for (let i = 0; i < peaks.length; i++) {
       const barH = Math.max(1, peaks[i] * h * 0.85);
       const peakT = (i / peaks.length) * dur;
-      ctx.fillStyle = peakT <= curTime ? "#8b5cf6" : "#4c3d6e";
+      ctx.fillStyle = peakT <= curTime ? "#8b5cf6" : "#364153";
       ctx.fillRect(i * barW, (h - barH) / 2, Math.max(1, barW - 0.5), barH);
     }
 
-    ctx.strokeStyle = "#3d3555"; ctx.lineWidth = 0.5;
+    ctx.strokeStyle = "#364153"; ctx.lineWidth = 0.5;
     ctx.beginPath(); ctx.moveTo(0, h / 2); ctx.lineTo(w, h / 2); ctx.stroke();
 
     const cx = (curTime / dur) * w;
@@ -1396,7 +1396,7 @@ export default function Home() {
     const dur = dlAudDuration || (dlAudRef.current?.duration || 0);
     const curTime = dlAudRef.current ? dlAudRef.current.currentTime : 0;
     const sel = dlAudSelRef.current;
-    ctx.fillStyle = "#1e1a2e";
+    ctx.fillStyle = "#1e2939";
     ctx.fillRect(0, 0, w, h);
     if (peaks.length === 0 || dur === 0) return;
     if (sel) {
@@ -1412,10 +1412,10 @@ export default function Home() {
     for (let i = 0; i < peaks.length; i++) {
       const barH = Math.max(1, peaks[i] * h * 0.85);
       const peakT = (i / peaks.length) * dur;
-      ctx.fillStyle = peakT <= curTime ? "#8b5cf6" : "#4c3d6e";
+      ctx.fillStyle = peakT <= curTime ? "#8b5cf6" : "#364153";
       ctx.fillRect(i * barW, (h - barH) / 2, Math.max(1, barW - 0.5), barH);
     }
-    ctx.strokeStyle = "#3d3555"; ctx.lineWidth = 0.5;
+    ctx.strokeStyle = "#364153"; ctx.lineWidth = 0.5;
     ctx.beginPath(); ctx.moveTo(0, h / 2); ctx.lineTo(w, h / 2); ctx.stroke();
     const cx = (curTime / dur) * w;
     ctx.strokeStyle = "#ef4444"; ctx.lineWidth = 2;
@@ -1657,7 +1657,7 @@ export default function Home() {
     const dur = clipDuration || (clipAudioRef.current?.duration || 0);
     const curTime = clipAudioRef.current ? clipAudioRef.current.currentTime : 0;
     const sel = clipSelRef.current;
-    ctx.fillStyle = "#1e1a2e";
+    ctx.fillStyle = "#1e2939";
     ctx.fillRect(0, 0, w, h);
     if (peaks.length === 0 || dur === 0) return;
     if (sel) {
@@ -1672,10 +1672,10 @@ export default function Home() {
     for (let i = 0; i < peaks.length; i++) {
       const barH = Math.max(1, peaks[i] * h * 0.85);
       const peakT = (i / peaks.length) * dur;
-      ctx.fillStyle = peakT <= curTime ? "#8b5cf6" : "#4c3d6e";
+      ctx.fillStyle = peakT <= curTime ? "#8b5cf6" : "#364153";
       ctx.fillRect(i * barW, (h - barH) / 2, Math.max(1, barW - 0.5), barH);
     }
-    ctx.strokeStyle = "#3d3555"; ctx.lineWidth = 0.5;
+    ctx.strokeStyle = "#364153"; ctx.lineWidth = 0.5;
     ctx.beginPath(); ctx.moveTo(0, h / 2); ctx.lineTo(w, h / 2); ctx.stroke();
     const cx = (curTime / dur) * w;
     ctx.strokeStyle = "#ef4444"; ctx.lineWidth = 2;
@@ -1896,9 +1896,9 @@ export default function Home() {
           analyser.getByteTimeDomainData(dataArr);
           const w = canvas.width, h = canvas.height;
           if (ctx) {
-            ctx.fillStyle = "#1e1a2e";
+            ctx.fillStyle = "#1e2939";
             ctx.fillRect(0, 0, w, h);
-            ctx.strokeStyle = "#2e2845";
+            ctx.strokeStyle = "#364153";
             ctx.lineWidth = 1;
             ctx.beginPath(); ctx.moveTo(0, h / 2); ctx.lineTo(w, h / 2); ctx.stroke();
             ctx.lineWidth = 2;
@@ -2432,16 +2432,16 @@ export default function Home() {
         <div className="flex justify-end mb-2">
           {authUser ? (
             <div className="flex items-center gap-3">
-              <span className="text-sm text-[#a09bb5]">
+              <span className="text-sm text-gray-300">
                 <svg className="inline w-4 h-4 mr-1 -mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
                 <span className="font-medium text-white">{authUser.username}</span>
                 {authUser.role === "admin" && <span className="ml-1 text-xs text-accent-400">(admin)</span>}
               </span>
-              <button onClick={handleSignout} className="text-xs text-[#6b6580] hover:text-red-400 transition-colors">로그아웃</button>
+              <button onClick={handleSignout} className="text-sm text-gray-400 hover:text-red-400 transition-colors">로그아웃</button>
             </div>
           ) : (
             <button onClick={() => { setAuthMode("signin"); setAuthError(""); setShowAuthModal(true); }}
-              className="flex items-center gap-1.5 text-sm text-[#a09bb5] hover:text-white transition-colors">
+              className="flex items-center gap-1.5 text-sm text-gray-300 hover:text-white transition-colors">
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
               로그인
             </button>
@@ -2454,12 +2454,17 @@ export default function Home() {
               Voice Studio
             </span>
           </h1>
-          <p className="mt-2 text-lg text-[#a09bb5]">아버지 어머니의 이야기를 기록합니다</p>
-          <p className="mt-1 text-sm text-[#6b6580]">AI 음성인식, 문체 변환, 음성 합성으로 만드는 회고록</p>
+          <p className="mt-2 text-lg text-gray-300">오픈소스 오디오북 생성기</p>
         </header>
 
         <div className="mb-8 flex items-center justify-between">
-          <h2 className="text-xl font-semibold text-[#e8e4f0]">프로젝트</h2>
+          <div className="flex items-center gap-3">
+            <a href="/" className="inline-flex items-center gap-1.5 rounded-lg border border-accent-500/50 bg-accent-600/20 px-3 py-1.5 text-sm font-medium text-accent-300 hover:bg-accent-600/40 hover:text-white transition-colors">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" /></svg>
+              Home
+            </a>
+            <h2 className="text-xl font-semibold text-white">프로젝트</h2>
+          </div>
           {authUser ? (
             <button className="btn-primary text-sm" onClick={() => { setNewProjectName(""); setShowNewModal(true); }}>
               <PlusIcon /> 새 프로젝트
@@ -2474,8 +2479,8 @@ export default function Home() {
         {projects.length === 0 ? (
           <div className="card text-center py-16">
             <BookIcon />
-            <p className="mt-4 text-[#a09bb5]">아직 프로젝트가 없습니다</p>
-            <p className="mt-1 text-sm text-[#6b6580]">{authUser ? "새 프로젝트를 만들어 회고록 작업을 시작하세요" : "로그인하여 프로젝트를 만드세요"}</p>
+            <p className="mt-4 text-gray-300">아직 프로젝트가 없습니다</p>
+            <p className="mt-1 text-sm text-gray-400">{authUser ? "새 프로젝트를 만들어 회고록 작업을 시작하세요" : "로그인하여 프로젝트를 만드세요"}</p>
             {authUser ? (
               <button className="btn-primary mt-6" onClick={() => { setNewProjectName(""); setShowNewModal(true); }}>
                 <PlusIcon /> 새 프로젝트 만들기
@@ -2489,12 +2494,12 @@ export default function Home() {
         ) : (
           <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
             {projects.map((p) => (
-              <div key={p.id} className="flex flex-col rounded-2xl border border-[#3d3556] bg-[#252040] p-6 shadow-xl hover:border-[#5b4f8a] transition-colors">
+              <div key={p.id} className="flex flex-col rounded-2xl border border-[#364153] bg-[#1e2939] p-6 shadow-xl hover:border-[#4a5565] transition-colors">
                 {/* Header */}
                 <div className="mb-4 flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <h3 className="text-xl font-bold text-white leading-tight truncate">{p.name}</h3>
-                    <p className="mt-1 text-sm text-[#b8b0cc]">{fmtDate(p.created_at)}</p>
+                    <p className="mt-1 text-sm text-gray-300">{fmtDate(p.created_at)}</p>
                   </div>
                   <span className={`shrink-0 rounded-full px-3 py-1 text-xs font-semibold tracking-wide uppercase ${
                     p.status === "created" ? "bg-slate-500/25 text-slate-200 ring-1 ring-slate-500/40" :
@@ -2510,10 +2515,10 @@ export default function Home() {
 
                 {/* Audio source */}
                 {p.source_audio_original_name && (
-                  <div className="mb-3 flex items-center gap-2 rounded-lg bg-[#1e1a30] px-3 py-2">
+                  <div className="mb-3 flex items-center gap-2 rounded-lg bg-[#1e2939] px-3 py-2">
                     <MicIcon />
-                    <span className="truncate text-sm font-medium text-[#ddd8ee]">{p.source_audio_original_name}</span>
-                    <span className="ml-auto shrink-0 text-xs text-[#b8b0cc]">{fmtSize(p.source_audio_size)}</span>
+                    <span className="truncate text-sm font-medium text-[#e5e7eb]">{p.source_audio_original_name}</span>
+                    <span className="ml-auto shrink-0 text-sm text-gray-300">{fmtSize(p.source_audio_size)}</span>
                   </div>
                 )}
 
@@ -2523,23 +2528,23 @@ export default function Home() {
                   const fmtCost = (c: number) => c === 0 ? "무료" : c < 0.01 ? `$${c.toFixed(4)}` : `$${c.toFixed(3)}`;
 
                   return (
-                    <div className="mb-3 rounded-lg border border-[#3d3556] bg-[#1a1630] overflow-hidden">
-                      <div className="px-3 py-2 border-b border-[#3d3556] flex items-center justify-between">
-                        <span className="text-xs font-semibold uppercase tracking-wider text-[#b8b0cc]">AI Services</span>
+                    <div className="mb-3 rounded-lg border border-[#364153] bg-[#101828] overflow-hidden">
+                      <div className="px-3 py-2 border-b border-[#364153] flex items-center justify-between">
+                        <span className="text-xs font-semibold uppercase tracking-wider text-gray-300">AI Services</span>
                         {totalCost > 0 && <span className="text-xs font-bold text-amber-300">총 {fmtCost(totalCost)}</span>}
                       </div>
-                      <div className="divide-y divide-[#2e2845]">
+                      <div className="divide-y divide-[#364153]">
                         {/* ASR */}
                         {p.transcript_text && (
                           <div className="px-3 py-2">
                             <div className="flex items-center justify-between">
                               <span className="text-xs font-semibold text-sky-300">🎙 ASR</span>
-                              <span className="text-[11px] font-medium text-emerald-400">무료</span>
+                              <span className="text-xs font-medium text-emerald-400">무료</span>
                             </div>
-                            <div className="mt-0.5 text-[11px] text-[#b8b0cc]">
+                            <div className="mt-0.5 text-sm text-gray-300">
                               Groq Whisper large-v3 + WavLM ({p.num_speakers || 2}명)
-                              {p.asr_audio_duration > 0 && <span className="ml-1 text-[#8a84a0]">· {fmtDuration(p.asr_audio_duration)}</span>}
-                              {p.asr_elapsed > 0 && <span className="ml-1 text-[#8a84a0]">· {fmtDuration(p.asr_elapsed)}</span>}
+                              {p.asr_audio_duration > 0 && <span className="ml-1 text-gray-400">· {fmtDuration(p.asr_audio_duration)}</span>}
+                              {p.asr_elapsed > 0 && <span className="ml-1 text-gray-400">· {fmtDuration(p.asr_elapsed)}</span>}
                             </div>
                           </div>
                         )}
@@ -2548,12 +2553,12 @@ export default function Home() {
                           <div className="px-3 py-2">
                             <div className="flex items-center justify-between">
                               <span className="text-xs font-semibold text-orange-300">✏️ 오타수정</span>
-                              <span className="text-[11px] font-medium text-amber-300">{fmtCost(p.fix_typos_cost || 0)}</span>
+                              <span className="text-xs font-medium text-amber-300">{fmtCost(p.fix_typos_cost || 0)}</span>
                             </div>
-                            <div className="mt-0.5 text-[11px] text-[#b8b0cc]">
+                            <div className="mt-0.5 text-sm text-gray-300">
                               {LLM_MODELS.find((m) => m.id === p.fix_typos_model)?.label ?? p.fix_typos_model}
-                              <span className="ml-1.5 text-[#8a84a0]">{(p.fix_typos_input_tokens + p.fix_typos_output_tokens).toLocaleString()} tok</span>
-                              <span className="ml-1 text-[#706a85]">({p.fix_typos_input_tokens.toLocaleString()}↓ {p.fix_typos_output_tokens.toLocaleString()}↑)</span>
+                              <span className="ml-1.5 text-gray-400">{(p.fix_typos_input_tokens + p.fix_typos_output_tokens).toLocaleString()} tok</span>
+                              <span className="ml-1 text-[#6a7282]">({p.fix_typos_input_tokens.toLocaleString()}↓ {p.fix_typos_output_tokens.toLocaleString()}↑)</span>
                             </div>
                           </div>
                         )}
@@ -2562,12 +2567,12 @@ export default function Home() {
                           <div className="px-3 py-2">
                             <div className="flex items-center justify-between">
                               <span className="text-xs font-semibold text-violet-300">🖊 문체변환</span>
-                              <span className="text-[11px] font-medium text-amber-300">{fmtCost(p.rewrite_cost || 0)}</span>
+                              <span className="text-xs font-medium text-amber-300">{fmtCost(p.rewrite_cost || 0)}</span>
                             </div>
-                            <div className="mt-0.5 text-[11px] text-[#b8b0cc]">
+                            <div className="mt-0.5 text-sm text-gray-300">
                               {LLM_MODELS.find((m) => m.id === p.rewrite_model)?.label ?? p.rewrite_model}
-                              <span className="ml-1.5 text-[#8a84a0]">{(p.rewrite_input_tokens + p.rewrite_output_tokens).toLocaleString()} tok</span>
-                              <span className="ml-1 text-[#706a85]">({p.rewrite_input_tokens.toLocaleString()}↓ {p.rewrite_output_tokens.toLocaleString()}↑)</span>
+                              <span className="ml-1.5 text-gray-400">{(p.rewrite_input_tokens + p.rewrite_output_tokens).toLocaleString()} tok</span>
+                              <span className="ml-1 text-[#6a7282]">({p.rewrite_input_tokens.toLocaleString()}↓ {p.rewrite_output_tokens.toLocaleString()}↑)</span>
                             </div>
                           </div>
                         )}
@@ -2576,16 +2581,16 @@ export default function Home() {
                           <div className="px-3 py-2">
                             <div className="flex items-center justify-between">
                               <span className="text-xs font-semibold text-emerald-300">🔊 TTS</span>
-                              <span className={`text-[11px] font-medium ${p.tts_engine === "elevenlabs" ? "text-amber-300" : "text-emerald-400"}`}>
+                              <span className={`text-xs font-medium ${p.tts_engine === "elevenlabs" ? "text-amber-300" : "text-emerald-400"}`}>
                                 {p.tts_engine === "elevenlabs" ? fmtCost(p.tts_cost || 0) : "로컬 GPU"}
                               </span>
                             </div>
-                            <div className="mt-0.5 text-[11px] text-[#b8b0cc]">
+                            <div className="mt-0.5 text-sm text-gray-300">
                               {p.tts_model || (p.tts_engine === "elevenlabs" ? "eleven_flash_v2_5" : "Qwen3-TTS-1.7B")}
                               {p.tts_engine === "elevenlabs" && p.tts_text_chars > 0 && (
-                                <span className="ml-1.5 text-[#8a84a0]">{p.tts_text_chars.toLocaleString()} chars</span>
+                                <span className="ml-1.5 text-gray-400">{p.tts_text_chars.toLocaleString()} chars</span>
                               )}
-                              {p.generated_audio_duration > 0 && <span className="ml-1 text-[#8a84a0]">· {fmtDuration(p.generated_audio_duration)}</span>}
+                              {p.generated_audio_duration > 0 && <span className="ml-1 text-gray-400">· {fmtDuration(p.generated_audio_duration)}</span>}
                             </div>
                           </div>
                         )}
@@ -2601,8 +2606,8 @@ export default function Home() {
                   const wc = countWords(bestText);
                   const label = p.rewritten_text ? "LLM 변환" : p.edited_transcript ? "편집 녹취록" : "원본 전사";
                   return (
-                    <div className="mb-3 flex items-center gap-2 rounded-lg bg-[#1e1a30] px-3 py-2">
-                      <span className="text-xs text-[#b8b0cc]">📝 {label}: {bestText.length.toLocaleString()}자 · {wc.toLocaleString()}단어</span>
+                    <div className="mb-3 flex items-center gap-2 rounded-lg bg-[#1e2939] px-3 py-2">
+                      <span className="text-sm text-gray-300">📝 {label}: {bestText.length.toLocaleString()}자 · {wc.toLocaleString()}단어</span>
                     </div>
                   );
                 })()}
@@ -2615,7 +2620,7 @@ export default function Home() {
                       <ChevronIcon open={expandedTranscripts.has(p.id)} /> 원본 전사
                     </button>
                     {expandedTranscripts.has(p.id) && (
-                      <div className="mt-1.5 max-h-[200px] overflow-y-auto rounded-lg border border-sky-500/20 bg-[#1a1630] px-4 py-3 text-sm leading-relaxed text-[#ddd8ee] whitespace-pre-wrap">
+                      <div className="mt-1.5 max-h-[200px] overflow-y-auto rounded-lg border border-sky-500/20 bg-[#101828] px-4 py-3 text-base leading-relaxed text-[#e5e7eb] whitespace-pre-wrap">
                         {p.transcript_text}
                       </div>
                     )}
@@ -2630,7 +2635,7 @@ export default function Home() {
                       <ChevronIcon open={expandedRewrites.has(p.id)} /> 박완서 문체
                     </button>
                     {expandedRewrites.has(p.id) && (
-                      <div className="mt-1.5 max-h-[200px] overflow-y-auto rounded-lg border border-violet-500/20 bg-violet-500/5 px-4 py-3 text-sm leading-relaxed text-[#ddd8ee] whitespace-pre-wrap">
+                      <div className="mt-1.5 max-h-[200px] overflow-y-auto rounded-lg border border-violet-500/20 bg-violet-500/5 px-4 py-3 text-base leading-relaxed text-[#e5e7eb] whitespace-pre-wrap">
                         {p.rewritten_text}
                       </div>
                     )}
@@ -2651,22 +2656,22 @@ export default function Home() {
                     <ChevronIcon open={expandedSummary.has(p.id)} /> 프로젝트 요약
                   </button>
                   {expandedSummary.has(p.id) && (
-                    <div className="mt-1.5 max-h-[300px] overflow-y-auto rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-4 py-3 text-sm leading-relaxed text-[#ddd8ee]">
+                    <div className="mt-1.5 max-h-[300px] overflow-y-auto rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-4 py-3 text-base leading-relaxed text-[#e5e7eb]">
                       {renderMarkdown(buildProjectSummary(p))}
                     </div>
                   )}
                 </div>
 
-                <div className="mt-auto flex gap-3 pt-4 border-t border-[#3d3556]">
+                <div className="mt-auto flex gap-3 pt-4 border-t border-[#364153]">
                   <button className="btn-primary flex-1 text-base py-2.5" onClick={() => openProject(p.id)}>열기</button>
-                  <button className="inline-flex items-center justify-center rounded-lg border border-[#3d3556] bg-[#1e1a30] px-4 py-2.5 text-[#b8b0cc] hover:bg-red-500/15 hover:text-red-300 hover:border-red-500/30 transition-colors" onClick={() => deleteProject(p.id)}><TrashIcon /></button>
+                  <button className="inline-flex items-center justify-center rounded-lg border border-[#364153] bg-[#1e2939] px-4 py-2.5 text-gray-300 hover:bg-red-500/15 hover:text-red-300 hover:border-red-500/30 transition-colors" onClick={() => deleteProject(p.id)}><TrashIcon /></button>
                 </div>
               </div>
             ))}
           </div>
         )}
 
-        <footer className="mt-12 border-t border-[#2e2845] pt-6 text-center text-xs text-[#6b6580] space-y-1">
+        <footer className="mt-12 border-t border-[#364153] pt-6 text-center text-sm text-gray-400 space-y-1">
           <p>오픈소스 오디오 자서전, 시낭독 영상 제작 소프트웨어</p>
           <p>2026년 5월, Sonny. 소스코드 : <a href="https://github.com/muntakson/voicestudio" target="_blank" rel="noopener noreferrer" className="underline hover:text-[#a78bfa]">github.com/muntakson/voicestudio</a></p>
           <p>제작목적 : AI 코딩 교육 &middot; mtshon@gmail.com</p>
@@ -2715,7 +2720,7 @@ export default function Home() {
                   {authLoading ? "..." : authMode === "signin" ? "로그인" : "가입"}
                 </button>
               </div>
-              <p className="text-center text-xs text-[#6b6580]">
+              <p className="text-center text-sm text-gray-400">
                 {authMode === "signin" ? (
                   <>계정이 없으신가요? <button className="text-accent-400 hover:underline" onClick={() => { setAuthMode("signup"); setAuthError(""); }}>회원가입</button></>
                 ) : (
@@ -2736,23 +2741,29 @@ export default function Home() {
   return (
     <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
       <header className="mb-10 text-center">
-        <button onClick={goToLanding} className="mb-4 inline-flex items-center gap-1 text-sm text-[#a09bb5] hover:text-white transition-colors">
-          <BackIcon /> 프로젝트 목록
-        </button>
+        <div className="mb-4 flex items-center justify-center gap-4">
+          <a href="/" className="inline-flex items-center gap-1.5 rounded-lg border border-accent-500/50 bg-accent-600/20 px-3 py-1.5 text-sm font-medium text-accent-300 hover:bg-accent-600/40 hover:text-white transition-colors">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" /></svg>
+            Home
+          </a>
+          <button onClick={goToLanding} className="inline-flex items-center gap-1 text-sm text-gray-300 hover:text-white transition-colors">
+            <BackIcon /> 프로젝트 목록
+          </button>
+        </div>
         <h1 className="text-4xl font-bold tracking-tight sm:text-5xl">
           <span className="bg-gradient-to-r from-accent-400 to-purple-400 bg-clip-text text-transparent">Voice Studio</span>
         </h1>
         {currentProjectName && (
           <div className="mt-2 flex items-center justify-center gap-2">
             <span className="text-lg font-medium text-white">{currentProjectName}</span>
-            {currentProjectId && <span className="rounded bg-[#2e2845] px-2 py-0.5 text-xs font-mono text-[#8a84a0]">{currentProjectId.slice(0, 8)}</span>}
+            {currentProjectId && <span className="rounded bg-[#364153] px-2 py-0.5 text-xs font-mono text-gray-400">{currentProjectId.slice(0, 8)}</span>}
           </div>
         )}
-        <p className="mt-1 text-[#a09bb5]">오디오회고록 제작 서비스 - 음성인식, 녹취록 생성, AI편집, AI 오디오북 생성</p>
-        <div className="mt-6 inline-flex rounded-lg border border-[#2e2845] bg-[#1a1726] p-1">
+        <p className="mt-1 text-gray-300">오디오회고록 제작 서비스 - 음성인식, 녹취록 생성, AI편집, AI 오디오북 생성</p>
+        <div className="mt-6 inline-flex rounded-lg border border-[#364153] bg-[#101828] p-1">
           {(["recorder", "download", "asr", "editor", "source", "tts", "infographic", "poem-shorts", "settings"] as const).map((tab) => (
             <button key={tab} onClick={() => setActiveTab(tab)}
-              className={`rounded-md px-6 py-2 text-sm font-medium transition-colors ${activeTab === tab ? "bg-accent-600 text-white" : "text-[#a09bb5] hover:text-white"}`}>
+              className={`rounded-md px-6 py-2 text-sm font-medium transition-colors ${activeTab === tab ? "bg-accent-600 text-white" : "text-gray-300 hover:text-white"}`}>
               {tab === "recorder" ? "음성녹음" : tab === "download" ? "오디오다운로드" : tab === "source" ? "소스" : tab === "tts" ? "오디오북생성" : tab === "infographic" ? "인포그래픽" : tab === "poem-shorts" ? "시 숏폼" : tab === "asr" ? "음성인식" : tab === "editor" ? "글편집" : "설정"}
             </button>
           ))}
@@ -2767,7 +2778,7 @@ export default function Home() {
               <div className="mb-3 flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <h2 className="text-lg font-semibold">Text to Speak</h2>
-                  <button className="p-1 rounded hover:bg-[#2a2540] text-[#a09bb5] hover:text-white transition-colors" title="시 모음 불러오기"
+                  <button className="p-1 rounded hover:bg-[#1e2939] text-gray-300 hover:text-white transition-colors" title="시 모음 불러오기"
                     onClick={() => { fetchPoemFiles(); setShowPoemPicker(true); }}>
                     <FileIcon />
                   </button>
@@ -2778,9 +2789,9 @@ export default function Home() {
                     </span>
                   )}
                 </div>
-                {text.trim() && <span className="text-xs text-[#b8b0cc]">{text.length.toLocaleString()}자 · {countWords(text).toLocaleString()}단어 · {estimateTtsTime(text.length, ttsEngine)}{ttsEngine === "elevenlabs" && <span className="ml-1 text-amber-300">(≈${(text.length * EL_COST_PER_CHAR).toFixed(3)})</span>}</span>}
+                {text.trim() && <span className="text-sm text-gray-300">{text.length.toLocaleString()}자 · {countWords(text).toLocaleString()}단어 · {estimateTtsTime(text.length, ttsEngine)}{ttsEngine === "elevenlabs" && <span className="ml-1 text-amber-300">(≈${(text.length * EL_COST_PER_CHAR).toFixed(3)})</span>}</span>}
               </div>
-              <textarea className="input-field min-h-[200px] resize-y text-sm leading-relaxed" placeholder="Type or paste the text you want to convert to speech...
+              <textarea className="input-field min-h-[200px] resize-y text-base leading-relaxed" placeholder="Type or paste the text you want to convert to speech...
 
 Batch mode: paste multiple stories with tags:
 <narration><title>제목</title><body>본문...</body></narration>"
@@ -2795,11 +2806,11 @@ Batch mode: paste multiple stories with tags:
                 <label className="label">TTS 엔진</label>
                 <div className="flex gap-2">
                   <button disabled
-                    className="flex-1 rounded-lg px-3 py-2 text-sm font-medium bg-[#1e1a2e] border border-transparent text-[#6b6580] cursor-not-allowed opacity-50">
+                    className="flex-1 rounded-lg px-3 py-2 text-sm font-medium bg-[#1e2939] border border-transparent text-gray-400 cursor-not-allowed opacity-50">
                     ElevenLabs <span className="text-[10px]">Cloud (비활성)</span>
                   </button>
                   <button onClick={() => { setTtsEngine("qwen3"); setLanguage("Korean"); const pref = voices.find((v) => v.id === "upload-be0916e0-세월"); setSelectedVoice(pref?.id || voices[0]?.id || ""); }}
-                    className={`flex-1 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${ttsEngine === "qwen3" ? "bg-accent-600/30 border border-accent-500/50 text-white" : "bg-[#1e1a2e] border border-transparent hover:bg-[#2a2540] text-[#c0bcd0]"}`}>
+                    className={`flex-1 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${ttsEngine === "qwen3" ? "bg-accent-600/30 border border-accent-500/50 text-white" : "bg-[#1e2939] border border-transparent hover:bg-[#1e2939] text-[#d1d5dc]"}`}>
                     Qwen3-TTS <span className="text-[10px] text-accent-400/70">Local</span>
                   </button>
                 </div>
@@ -2811,9 +2822,9 @@ Batch mode: paste multiple stories with tags:
                     <div><label className="label">Seed (optional)</label><input type="number" className="input-field" placeholder="Random" value={seed} onChange={(e) => setSeed(e.target.value)} /></div>
                   </div>
                   <label className="flex items-center gap-2 cursor-pointer">
-                    <input type="checkbox" checked={postprocess} onChange={(e) => setPostprocess(e.target.checked)} className="h-4 w-4 rounded border-[#3d3555] bg-[#1e1a2e] text-accent-500 focus:ring-accent-500/50" />
-                    <span className="text-sm text-[#c0bcd0]">Audio post-processing</span>
-                    <span className="text-[10px] text-[#6b6580]">(compression, normalization)</span>
+                    <input type="checkbox" checked={postprocess} onChange={(e) => setPostprocess(e.target.checked)} className="h-4 w-4 rounded border-[#364153] bg-[#1e2939] text-accent-500 focus:ring-accent-500/50" />
+                    <span className="text-sm text-[#d1d5dc]">Audio post-processing</span>
+                    <span className="text-[10px] text-gray-400">(compression, normalization)</span>
                   </label>
                 </div>
               )}
@@ -2830,11 +2841,11 @@ Batch mode: paste multiple stories with tags:
               <section className="card">
                 <h2 className="mb-4 text-lg font-semibold">Output</h2>
                 {(gen.status === "loading" || gen.status === "generating") && (
-                  <div className="space-y-3"><div className="flex items-center gap-3"><Spinner /><span className="text-sm text-[#a09bb5]">{gen.message}</span><span className="text-sm font-mono text-accent-400">{genElapsed > 0 && `${Math.floor(genElapsed / 60)}:${(genElapsed % 60).toString().padStart(2, "0")}`}</span></div>
-                    <div className="h-2 overflow-hidden rounded-full bg-[#241f33]"><div className="progress-pulse h-full rounded-full bg-gradient-to-r from-accent-600 to-purple-500" style={{ width: gen.status === "loading" ? "40%" : "75%", transition: "width 0.5s ease" }} /></div></div>)}
+                  <div className="space-y-3"><div className="flex items-center gap-3"><Spinner /><span className="text-sm text-gray-300">{gen.message}</span><span className="text-sm font-mono text-accent-400">{genElapsed > 0 && `${Math.floor(genElapsed / 60)}:${(genElapsed % 60).toString().padStart(2, "0")}`}</span></div>
+                    <div className="h-2 overflow-hidden rounded-full bg-[#364153]"><div className="progress-pulse h-full rounded-full bg-gradient-to-r from-accent-600 to-purple-500" style={{ width: gen.status === "loading" ? "40%" : "75%", transition: "width 0.5s ease" }} /></div></div>)}
                 {gen.status === "error" && <div className="rounded-lg border border-red-800/50 bg-red-900/20 px-4 py-3 text-sm text-red-300">{gen.message}</div>}
                 {gen.status === "complete" && gen.audioUrl && (
-                  <div className="space-y-4"><div className="flex items-center gap-2 text-sm text-green-400"><CheckIcon /><span>Done!{genElapsed > 0 && <span className="ml-2 text-[#6b6580]">(소요시간: {genElapsed < 60 ? `${genElapsed}초` : `${Math.floor(genElapsed / 60)}분 ${genElapsed % 60}초`})</span>}{gen.duration != null && <span className="ml-1 text-[#6b6580]">· 오디오 {gen.duration.toFixed(1)}s</span>}</span></div>
+                  <div className="space-y-4"><div className="flex items-center gap-2 text-sm text-green-400"><CheckIcon /><span>Done!{genElapsed > 0 && <span className="ml-2 text-gray-400">(소요시간: {genElapsed < 60 ? `${genElapsed}초` : `${Math.floor(genElapsed / 60)}분 ${genElapsed % 60}초`})</span>}{gen.duration != null && <span className="ml-1 text-gray-400">· 오디오 {gen.duration.toFixed(1)}s</span>}</span></div>
                     <AudioPlayer src={gen.audioUrl} /><a href={gen.audioUrl} download className="btn-secondary inline-flex mt-2"><DownloadIcon /> Download</a></div>)}
               </section>
             )}
@@ -2845,22 +2856,22 @@ Batch mode: paste multiple stories with tags:
                   {!batchStatus.running && <button className="btn-secondary text-xs" onClick={() => setBatchStatus({ running: false, current: 0, total: 0, results: [] })}>Clear</button>}
                 </div>
                 {batchStatus.running && (
-                  <div className="mb-3 h-2 overflow-hidden rounded-full bg-[#241f33]">
+                  <div className="mb-3 h-2 overflow-hidden rounded-full bg-[#364153]">
                     <div className="h-full rounded-full bg-gradient-to-r from-accent-600 to-purple-500 transition-all duration-500" style={{ width: `${(batchStatus.current / batchStatus.total) * 100}%` }} />
                   </div>
                 )}
                 <div className="space-y-2 max-h-[400px] overflow-y-auto">
                   {batchStatus.results.map((r, i) => (
-                    <div key={i} className={`rounded-lg px-4 py-3 text-sm ${r.status === "complete" ? "bg-green-900/20 border border-green-800/40" : r.status === "error" ? "bg-red-900/20 border border-red-800/40" : r.status === "generating" ? "bg-accent-900/20 border border-accent-500/40" : "bg-[#1e1a2e] border border-transparent"}`}>
+                    <div key={i} className={`rounded-lg px-4 py-3 text-sm ${r.status === "complete" ? "bg-green-900/20 border border-green-800/40" : r.status === "error" ? "bg-red-900/20 border border-red-800/40" : r.status === "generating" ? "bg-accent-900/20 border border-accent-500/40" : "bg-[#1e2939] border border-transparent"}`}>
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2 min-w-0">
-                          <span className="font-medium text-[#e8e4f0] truncate">{i + 1}. {r.title}</span>
+                          <span className="font-medium text-white truncate">{i + 1}. {r.title}</span>
                           {r.status === "generating" && <Spinner small />}
                         </div>
                         <div className="flex items-center gap-2 shrink-0">
                           {r.status === "complete" && <span className="text-xs text-green-400">완료</span>}
                           {r.status === "error" && <span className="text-xs text-red-400">실패</span>}
-                          {r.status === "pending" && <span className="text-xs text-[#6b6580]">대기</span>}
+                          {r.status === "pending" && <span className="text-sm text-gray-400">대기</span>}
                           {r.status === "generating" && <span className="text-xs text-accent-400">생성 중</span>}
                         </div>
                       </div>
@@ -2879,7 +2890,7 @@ Batch mode: paste multiple stories with tags:
                           <div className="mt-2 space-y-1">
                             {chunkTotal > 0 && (
                               <div className="flex items-center gap-2">
-                                <div className="flex-1 h-1.5 rounded-full bg-[#241f33] overflow-hidden">
+                                <div className="flex-1 h-1.5 rounded-full bg-[#364153] overflow-hidden">
                                   <div className="h-full rounded-full bg-accent-500 transition-all duration-300" style={{ width: `${pct}%` }} />
                                 </div>
                                 <span className="text-xs font-mono text-accent-400 shrink-0">{chunkCur}/{chunkTotal} ({pct}%)</span>
@@ -2901,9 +2912,9 @@ Batch mode: paste multiple stories with tags:
                   <h2 className="text-lg font-semibold">Debug Console</h2>
                   <button className="btn-secondary text-xs" onClick={() => setDebugLogs([])}>Clear</button>
                 </div>
-                <div ref={debugRef} className="max-h-[300px] overflow-y-auto rounded-lg bg-[#0d0b14] border border-[#2e2845] p-3 font-mono text-xs leading-relaxed">
+                <div ref={debugRef} className="max-h-[300px] overflow-y-auto rounded-lg bg-[#101828] border border-[#364153] p-3 font-mono text-xs leading-relaxed">
                   {debugLogs.map((log, i) => (
-                    <div key={i} className={`${log.includes("ERROR") || log.includes("FETCH ERROR") ? "text-red-400" : log.includes("WARNING") ? "text-amber-400" : log.includes("complete") ? "text-green-400" : "text-[#a09bb5]"}`}>{log}</div>
+                    <div key={i} className={`${log.includes("ERROR") || log.includes("FETCH ERROR") ? "text-red-400" : log.includes("WARNING") ? "text-amber-400" : log.includes("complete") ? "text-green-400" : "text-gray-300"}`}>{log}</div>
                   ))}
                 </div>
               </section>
@@ -2920,19 +2931,19 @@ Batch mode: paste multiple stories with tags:
                   </>
                 )}
               </div>
-              {activeVoices.length === 0 ? <p className="text-sm text-[#6b6580]">No voices yet.</p> : (
+              {activeVoices.length === 0 ? <p className="text-sm text-gray-400">No voices yet.</p> : (
                 <div className="space-y-1.5 max-h-[400px] overflow-y-auto pr-1">
                   {activeVoices.map((v) => (
                     <button key={v.id} onClick={() => setSelectedVoice(v.id)}
-                      className={`w-full rounded-lg px-3 py-2.5 text-left text-sm transition-colors ${selectedVoice === v.id ? "bg-accent-600/30 border border-accent-500/50 text-white" : "bg-[#1e1a2e] border border-transparent hover:bg-[#2a2540] text-[#c0bcd0]"}`}>
-                      <div className="flex items-center justify-between"><span className="font-medium">{v.name}</span><span className="text-xs text-[#6b6580]">{v.language}</span></div>
+                      className={`w-full rounded-lg px-3 py-2.5 text-left text-sm transition-colors ${selectedVoice === v.id ? "bg-accent-600/30 border border-accent-500/50 text-white" : "bg-[#1e2939] border border-transparent hover:bg-[#1e2939] text-[#d1d5dc]"}`}>
+                      <div className="flex items-center justify-between"><span className="font-medium">{v.name}</span><span className="text-sm text-gray-400">{v.language}</span></div>
                       {v.source === "uploaded" && <span className="mt-0.5 inline-block text-[10px] text-accent-400/70">uploaded</span>}
                       {v.source === "elevenlabs" && <span className="mt-0.5 inline-block text-[10px] text-emerald-400/70">{v.ref_text}</span>}
                     </button>
                   ))}
                 </div>
               )}
-              {ttsEngine === "qwen3" && currentVoice?.ref_text && <div className="mt-3 rounded-lg bg-[#1e1a2e] px-3 py-2"><p className="text-[10px] uppercase tracking-wider text-[#6b6580] mb-1">Reference transcript</p><p className="text-xs text-[#a09bb5] line-clamp-3">{currentVoice.ref_text}</p></div>}
+              {ttsEngine === "qwen3" && currentVoice?.ref_text && <div className="mt-3 rounded-lg bg-[#1e2939] px-3 py-2"><p className="text-[10px] uppercase tracking-wider text-gray-400 mb-1">Reference transcript</p><p className="text-sm text-gray-300 line-clamp-3">{currentVoice.ref_text}</p></div>}
             </section>
           </aside>
         </div>
@@ -2985,7 +2996,7 @@ Batch mode: paste multiple stories with tags:
               </button>
             </div>
             <textarea
-              className="input-field min-h-[300px] resize-y text-sm leading-relaxed"
+              className="input-field min-h-[300px] resize-y text-base leading-relaxed"
               value={infoPrompt}
               onChange={(e) => setInfoPrompt(e.target.value)}
               placeholder="인포그래픽 프롬프트를 입력하세요..."
@@ -2999,7 +3010,7 @@ Batch mode: paste multiple stories with tags:
               </button>
             )}
             {!infoPrompt && !srcRewritten && (
-              <p className="mt-2 text-xs text-[#6b6580]">소스 탭의 LLM 변환텍스트가 있으면 자동으로 프롬프트에 포함할 수 있습니다.</p>
+              <p className="mt-2 text-sm text-gray-400">소스 탭의 LLM 변환텍스트가 있으면 자동으로 프롬프트에 포함할 수 있습니다.</p>
             )}
             {infoStatus.status === "generating" && (
               <div className="mt-3 flex items-center gap-2 text-sm text-accent-400"><Spinner small /> {infoStatus.message}</div>
@@ -3021,11 +3032,11 @@ Batch mode: paste multiple stories with tags:
                   <DownloadIcon /> 다운로드
                 </a>
               </div>
-              <div className="rounded-lg overflow-hidden border border-[#2e2845]">
+              <div className="rounded-lg overflow-hidden border border-[#364153]">
                 <img src={infoImageUrl} alt="Generated infographic" className="w-full h-auto" />
               </div>
               {infoStatus.status === "complete" && infoStatus.message && (
-                <p className="mt-2 text-xs text-[#8a84a0]">{infoStatus.message}</p>
+                <p className="mt-2 text-sm text-gray-400">{infoStatus.message}</p>
               )}
             </section>
           )}
@@ -3038,11 +3049,11 @@ Batch mode: paste multiple stories with tags:
           {/* Step 1: Poem Input */}
           <section className="card">
             <h2 className="mb-2 text-lg font-semibold">1. 시 입력</h2>
-            <p className="mb-3 text-xs text-[#8a84a0]">첫째 줄: 제목 &nbsp;|&nbsp; 둘째 줄: 작가 &nbsp;|&nbsp; 나머지: 시 본문</p>
-            <textarea className="w-full rounded-lg border border-[#2e2845] bg-[#1a1726] p-4 text-sm leading-relaxed text-white placeholder-[#5a5370] focus:border-accent-500 focus:outline-none resize-y min-h-[220px]"
+            <p className="mb-3 text-sm text-gray-400">첫째 줄: 제목 &nbsp;|&nbsp; 둘째 줄: 작가 &nbsp;|&nbsp; 나머지: 시 본문</p>
+            <textarea className="w-full rounded-lg border border-[#364153] bg-[#101828] p-4 text-base leading-relaxed text-white placeholder-[#6a7282] focus:border-accent-500 focus:outline-none resize-y min-h-[220px]"
               value={psPoem} onChange={(e) => setPsPoem(e.target.value)}
               placeholder={"꽃\n김춘수\n\n내가 그의 이름을 불러주기 전에는\n그는 다만\n하나의 몸짓에 지나지 않았다.\n\n내가 그의 이름을 불러주었을 때\n그는 나에게로 와서\n꽃이 되었다."} />
-            {psPoem && <p className="mt-1 text-xs text-[#8a84a0]">{psPoem.length}자 · {psPoem.split("\n").filter(l => l.trim()).length}줄</p>}
+            {psPoem && <p className="mt-1 text-sm text-gray-400">{psPoem.length}자 · {psPoem.split("\n").filter(l => l.trim()).length}줄</p>}
           </section>
 
           {/* Step 2: Generate Audio */}
@@ -3074,7 +3085,7 @@ Batch mode: paste multiple stories with tags:
           <section className="card">
             <div className="mb-3 flex items-center justify-between">
               <h2 className="text-lg font-semibold">3. 이미지 프롬프트</h2>
-              <button className="rounded-lg border border-[#2e2845] bg-[#1a1726] px-5 py-2 text-sm font-medium text-[#a09bb5] hover:text-white hover:border-accent-500 transition-colors disabled:opacity-50"
+              <button className="rounded-lg border border-[#364153] bg-[#101828] px-5 py-2 text-sm font-medium text-gray-300 hover:text-white hover:border-accent-500 transition-colors disabled:opacity-50"
                 disabled={!psPoem.trim() || psImagePromptStatus.status === "generating"}
                 onClick={handlePsGenerateImagePrompt}>
                 {psImagePromptStatus.status === "generating" ? "생성 중..." : "프롬프트 생성"}
@@ -3088,7 +3099,7 @@ Batch mode: paste multiple stories with tags:
             )}
             {psImagePromptStatus.status === "error" && <div className="rounded-lg bg-red-500/10 border border-red-500/30 px-4 py-3 text-sm text-red-300">{psImagePromptStatus.message}</div>}
             {psImagePromptStatus.status === "complete" && <p className="text-xs text-green-400 mb-2">{psImagePromptStatus.message}</p>}
-            <textarea className="w-full rounded-lg border border-[#2e2845] bg-[#1a1726] p-4 text-sm text-white placeholder-[#5a5370] focus:border-accent-500 focus:outline-none resize-y min-h-[100px]"
+            <textarea className="w-full rounded-lg border border-[#364153] bg-[#101828] p-4 text-sm text-white placeholder-[#6a7282] focus:border-accent-500 focus:outline-none resize-y min-h-[100px]"
               value={psImagePrompt} onChange={(e) => setPsImagePrompt(e.target.value)}
               placeholder="이미지 생성 프롬프트가 여기에 표시됩니다..." />
           </section>
@@ -3112,7 +3123,7 @@ Batch mode: paste multiple stories with tags:
             {psImageStatus.status === "error" && <div className="rounded-lg bg-red-500/10 border border-red-500/30 px-4 py-3 text-sm text-red-300">{psImageStatus.message}</div>}
             {psImageStatus.status === "complete" && <p className="text-xs text-green-400 mb-2">{psImageStatus.message}</p>}
             {psImageUrl && (
-              <div className="rounded-lg overflow-hidden border border-[#2e2845]">
+              <div className="rounded-lg overflow-hidden border border-[#364153]">
                 <img src={psImageUrl} alt="Poem background" className="w-full h-auto max-h-[500px] object-contain bg-black" />
               </div>
             )}
@@ -3122,7 +3133,7 @@ Batch mode: paste multiple stories with tags:
           <section className="card">
             <div className="mb-3 flex items-center justify-between">
               <h2 className="text-lg font-semibold">5. 영상 프롬프트</h2>
-              <button className="rounded-lg border border-[#2e2845] bg-[#1a1726] px-5 py-2 text-sm font-medium text-[#a09bb5] hover:text-white hover:border-accent-500 transition-colors disabled:opacity-50"
+              <button className="rounded-lg border border-[#364153] bg-[#101828] px-5 py-2 text-sm font-medium text-gray-300 hover:text-white hover:border-accent-500 transition-colors disabled:opacity-50"
                 disabled={!psPoem.trim() || psVideoPromptStatus.status === "generating"}
                 onClick={handlePsGenerateVideoPrompt}>
                 {psVideoPromptStatus.status === "generating" ? "생성 중..." : "프롬프트 생성"}
@@ -3136,7 +3147,7 @@ Batch mode: paste multiple stories with tags:
             )}
             {psVideoPromptStatus.status === "error" && <div className="rounded-lg bg-red-500/10 border border-red-500/30 px-4 py-3 text-sm text-red-300">{psVideoPromptStatus.message}</div>}
             {psVideoPromptStatus.status === "complete" && <p className="text-xs text-green-400 mb-2">{psVideoPromptStatus.message}</p>}
-            <textarea className="w-full rounded-lg border border-[#2e2845] bg-[#1a1726] p-4 text-sm text-white placeholder-[#5a5370] focus:border-accent-500 focus:outline-none resize-y min-h-[100px]"
+            <textarea className="w-full rounded-lg border border-[#364153] bg-[#101828] p-4 text-sm text-white placeholder-[#6a7282] focus:border-accent-500 focus:outline-none resize-y min-h-[100px]"
               value={psVideoPrompt} onChange={(e) => setPsVideoPrompt(e.target.value)}
               placeholder="영상 구성 프롬프트가 여기에 표시됩니다..." />
           </section>
@@ -3151,7 +3162,7 @@ Batch mode: paste multiple stories with tags:
                 {psVideoStatus.status === "generating" ? "생성 중..." : "영상 생성"}
               </button>
             </div>
-            {!psAudioUrl && <p className="text-xs text-[#8a84a0]">음성과 배경 이미지를 먼저 생성해주세요</p>}
+            {!psAudioUrl && <p className="text-sm text-gray-400">음성과 배경 이미지를 먼저 생성해주세요</p>}
             {psVideoStatus.status === "generating" && (
               <div className="flex items-center gap-2 text-sm text-accent-400">
                 <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
@@ -3162,10 +3173,10 @@ Batch mode: paste multiple stories with tags:
             {psVideoStatus.status === "complete" && <p className="text-xs text-green-400 mb-2">{psVideoStatus.message}</p>}
             {psVideoUrl && (
               <div className="space-y-3">
-                <div className="rounded-lg overflow-hidden border border-[#2e2845]">
+                <div className="rounded-lg overflow-hidden border border-[#364153]">
                   <video src={psVideoUrl} controls className="w-full max-h-[600px]" />
                 </div>
-                <a href={psVideoUrl} download className="inline-flex items-center gap-2 rounded-lg border border-[#2e2845] bg-[#1a1726] px-4 py-2 text-sm text-[#a09bb5] hover:text-white hover:border-accent-500 transition-colors">
+                <a href={psVideoUrl} download className="inline-flex items-center gap-2 rounded-lg border border-[#364153] bg-[#101828] px-4 py-2 text-sm text-gray-300 hover:text-white hover:border-accent-500 transition-colors">
                   <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
                   다운로드
                 </a>
@@ -3179,17 +3190,17 @@ Batch mode: paste multiple stories with tags:
               <h2 className="mb-3 text-lg font-semibold">생성 결과</h2>
               <div className="space-y-2 text-sm">
                 <div className="flex items-center gap-2">
-                  <span className={psAudioUrl ? "text-green-400" : "text-[#5a5370]"}>{psAudioUrl ? "✓" : "○"}</span>
-                  <span className={psAudioUrl ? "text-white" : "text-[#5a5370]"}>음성 낭독</span>
-                  {psAudioDuration && <span className="text-[#8a84a0]">({psAudioDuration.toFixed(1)}초)</span>}
+                  <span className={psAudioUrl ? "text-green-400" : "text-[#6a7282]"}>{psAudioUrl ? "✓" : "○"}</span>
+                  <span className={psAudioUrl ? "text-white" : "text-[#6a7282]"}>음성 낭독</span>
+                  {psAudioDuration && <span className="text-gray-400">({psAudioDuration.toFixed(1)}초)</span>}
                 </div>
                 <div className="flex items-center gap-2">
-                  <span className={psImageUrl ? "text-green-400" : "text-[#5a5370]"}>{psImageUrl ? "✓" : "○"}</span>
-                  <span className={psImageUrl ? "text-white" : "text-[#5a5370]"}>배경 이미지</span>
+                  <span className={psImageUrl ? "text-green-400" : "text-[#6a7282]"}>{psImageUrl ? "✓" : "○"}</span>
+                  <span className={psImageUrl ? "text-white" : "text-[#6a7282]"}>배경 이미지</span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <span className={psVideoUrl ? "text-green-400" : "text-[#5a5370]"}>{psVideoUrl ? "✓" : "○"}</span>
-                  <span className={psVideoUrl ? "text-white" : "text-[#5a5370]"}>숏폼 영상</span>
+                  <span className={psVideoUrl ? "text-green-400" : "text-[#6a7282]"}>{psVideoUrl ? "✓" : "○"}</span>
+                  <span className={psVideoUrl ? "text-white" : "text-[#6a7282]"}>숏폼 영상</span>
                 </div>
               </div>
             </section>
@@ -3203,7 +3214,7 @@ Batch mode: paste multiple stories with tags:
           <div className="space-y-6">
             <section className="card">
               <h2 className="mb-3 text-lg font-semibold">음성 녹음</h2>
-              <div className="relative rounded-lg border border-[#2e2845] overflow-hidden">
+              <div className="relative rounded-lg border border-[#364153] overflow-hidden">
                 <canvas ref={recorderCanvasRef} width={800} height={160} className="w-full h-40 block" />
                 <div className="absolute top-3 right-3 rounded-lg bg-black/60 px-3 py-1.5">
                   <span className="text-2xl font-mono text-white tabular-nums">
@@ -3212,7 +3223,7 @@ Batch mode: paste multiple stories with tags:
                 </div>
                 {!isRecording && recorderElapsed === 0 && !recordingSaved && (
                   <div className="absolute inset-0 flex items-center justify-center">
-                    <p className="text-[#9590a8] text-sm">녹음 버튼을 눌러 시작하세요</p>
+                    <p className="text-[#99a1af] text-sm">녹음 버튼을 눌러 시작하세요</p>
                   </div>
                 )}
                 {isRecording && (
@@ -3241,7 +3252,7 @@ Batch mode: paste multiple stories with tags:
                 </button>
               )}
               {recordingSaving && (
-                <div className="mt-3 flex items-center gap-2 text-sm text-[#c0bcd0]">
+                <div className="mt-3 flex items-center gap-2 text-sm text-[#d1d5dc]">
                   <Spinner /> 저장 중...
                 </div>
               )}
@@ -3262,14 +3273,14 @@ Batch mode: paste multiple stories with tags:
               <section className="card">
                 <h2 className="mb-3 text-lg font-semibold">오디오 편집기</h2>
                 {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions */}
-                <div className="relative rounded-lg border border-[#2e2845] overflow-hidden cursor-crosshair"
+                <div className="relative rounded-lg border border-[#364153] overflow-hidden cursor-crosshair"
                   onMouseDown={onAudMouseDown}>
                   <canvas ref={audCanvasRef} width={900} height={140} className="w-full h-36 block" />
                 </div>
 
                 {/* Time + Selection info */}
                 <div className="mt-2 flex items-center justify-between text-xs">
-                  <span className="font-mono text-[#c0bcd0] tabular-nums">
+                  <span className="font-mono text-[#d1d5dc] tabular-nums">
                     {fmtAudTime(audTime)} / {fmtAudTime(audBuffer.duration)}
                   </span>
                   {audSelection && Math.abs(audSelection[1] - audSelection[0]) >= 0.05 && (
@@ -3293,8 +3304,8 @@ Batch mode: paste multiple stories with tags:
                 </div>
 
                 {/* Edit tools */}
-                <div className="mt-3 flex items-center gap-2 border-t border-[#2e2845] pt-3">
-                  <span className="text-xs text-[#9590a8] mr-1">편집:</span>
+                <div className="mt-3 flex items-center gap-2 border-t border-[#364153] pt-3">
+                  <span className="text-xs text-[#99a1af] mr-1">편집:</span>
                   <button className="btn-secondary px-3 py-1.5 text-xs" onClick={audCut}
                     disabled={!audSelection || Math.abs(audSelection[1] - audSelection[0]) < 0.05}>
                     <ScissorsIcon /> 잘라내기
@@ -3310,7 +3321,7 @@ Batch mode: paste multiple stories with tags:
                 </div>
 
                 {/* Save */}
-                <div className="mt-3 flex items-center gap-2 border-t border-[#2e2845] pt-3">
+                <div className="mt-3 flex items-center gap-2 border-t border-[#364153] pt-3">
                   <button className="btn-primary px-4 py-2 text-sm" onClick={audSave} disabled={audSaving}>
                     <SaveIcon /> 저장
                   </button>
@@ -3329,7 +3340,7 @@ Batch mode: paste multiple stories with tags:
           <aside className="space-y-6">
             <section className="card">
               <h2 className="mb-3 text-lg font-semibold">사용 방법</h2>
-              <ul className="space-y-2 text-sm text-[#c0bcd0]">
+              <ul className="space-y-2 text-sm text-[#d1d5dc]">
                 <li className="flex gap-2"><span className="text-accent-400">1.</span>녹음 시작 버튼을 클릭하세요.</li>
                 <li className="flex gap-2"><span className="text-accent-400">2.</span>마이크 접근 권한을 허용해 주세요.</li>
                 <li className="flex gap-2"><span className="text-accent-400">3.</span>녹음이 시작되면 파형이 표시됩니다.</li>
@@ -3383,12 +3394,12 @@ Batch mode: paste multiple stories with tags:
             {/* Debug Console */}
             <section className="card">
               <div className="mb-2 flex items-center justify-between">
-                <h2 className="text-sm font-semibold text-[#a09bb5]">Debug Console</h2>
-                <button className="text-xs text-[#6b6580] hover:text-white" onClick={() => setDlLogs([])}>Clear</button>
+                <h2 className="text-sm font-semibold text-gray-300">Debug Console</h2>
+                <button className="text-sm text-gray-400 hover:text-white" onClick={() => setDlLogs([])}>Clear</button>
               </div>
-              <div ref={dlLogRef} className="h-40 overflow-y-auto rounded-lg bg-[#0d0b14] border border-[#2e2845] p-3 font-mono text-xs text-[#8a84a0] space-y-0.5">
+              <div ref={dlLogRef} className="h-40 overflow-y-auto rounded-lg bg-[#101828] border border-[#364153] p-3 font-mono text-sm text-gray-400 space-y-0.5">
                 {dlLogs.length === 0 ? (
-                  <p className="text-[#4a4560]">다운로드를 시작하면 로그가 표시됩니다...</p>
+                  <p className="text-[#4a5565]">다운로드를 시작하면 로그가 표시됩니다...</p>
                 ) : dlLogs.map((log, i) => (
                   <p key={i} className={log.includes("오류") || log.includes("실패") ? "text-red-400" : log.includes("완료") || log.includes("저장") ? "text-green-400" : ""}>{log}</p>
                 ))}
@@ -3399,15 +3410,15 @@ Batch mode: paste multiple stories with tags:
             {dlAudReady && dlAudioUrl && (
               <section className="card">
                 <h2 className="mb-3 text-lg font-semibold">오디오 편집기</h2>
-                <p className="mb-2 text-xs text-[#6b6580]">{dlAudioFilename}</p>
+                <p className="mb-2 text-sm text-gray-400">{dlAudioFilename}</p>
                 {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions */}
-                <div className="relative rounded-lg border border-[#2e2845] overflow-hidden cursor-crosshair"
+                <div className="relative rounded-lg border border-[#364153] overflow-hidden cursor-crosshair"
                   onMouseDown={onDlAudMouseDown}>
                   <canvas ref={dlAudCanvasRef} width={900} height={140} className="w-full h-36 block" />
                 </div>
 
                 <div className="mt-2 flex items-center justify-between text-xs">
-                  <span className="font-mono text-[#c0bcd0] tabular-nums">
+                  <span className="font-mono text-[#d1d5dc] tabular-nums">
                     {fmtAudTime(dlAudTime)} / {fmtAudTime(dlAudDuration)}
                   </span>
                   {dlAudSelection && Math.abs(dlAudSelection[1] - dlAudSelection[0]) >= 0.5 && (
@@ -3431,8 +3442,8 @@ Batch mode: paste multiple stories with tags:
                   <button className="btn-secondary px-3 py-2 text-sm" onClick={() => dlAudSeek(-30)} title="-30초">30 <BwdIcon /></button>
                 </div>
 
-                <div className="mt-3 flex items-center gap-2 border-t border-[#2e2845] pt-3">
-                  <span className="text-xs text-[#9590a8] mr-1">선택 영역:</span>
+                <div className="mt-3 flex items-center gap-2 border-t border-[#364153] pt-3">
+                  <span className="text-xs text-[#99a1af] mr-1">선택 영역:</span>
                   <button className="btn-secondary px-3 py-1.5 text-xs" onClick={() => { setDlAudSelection(null); dlAudSelRef.current = null; drawDlAudCanvas(); }}
                     disabled={!dlAudSelection}>
                     선택 해제
@@ -3455,7 +3466,7 @@ Batch mode: paste multiple stories with tags:
           <aside className="space-y-6">
             <section className="card">
               <h2 className="mb-3 text-lg font-semibold">사용 방법</h2>
-              <ul className="space-y-2 text-sm text-[#c0bcd0]">
+              <ul className="space-y-2 text-sm text-[#d1d5dc]">
                 <li className="flex gap-2"><span className="text-accent-400">1.</span>YouTube, SoundCloud 등의 URL을 입력하세요.</li>
                 <li className="flex gap-2"><span className="text-accent-400">2.</span>파일명을 지정하거나 비워두면 원본 제목을 사용합니다.</li>
                 <li className="flex gap-2"><span className="text-accent-400">3.</span>다운로드 버튼을 클릭하면 MP3로 변환됩니다.</li>
@@ -3480,13 +3491,13 @@ Batch mode: paste multiple stories with tags:
                   <ListIcon /> 파일 목록
                 </button>
               </div>
-              <div className="relative flex min-h-[160px] cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed border-[#2e2845] bg-[#241f33]/50 p-6 transition-colors hover:border-accent-500/50 hover:bg-[#241f33]"
+              <div className="relative flex min-h-[160px] cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed border-[#364153] bg-[#364153]/50 p-6 transition-colors hover:border-accent-500/50 hover:bg-[#364153]"
                 onClick={() => asrFileRef.current?.click()}
                 onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
                 onDrop={(e) => { e.preventDefault(); e.stopPropagation(); const f = e.dataTransfer.files?.[0]; if (f) { setAsrFile(f); setSelectedExistingFile(null); setAsrStatus({ status: "idle", message: "" }); setTranscript(null); } }}>
-                {asrFile ? (<><MicIcon /><p className="mt-3 text-sm font-medium text-[#e8e4f0]">{asrFile.name}</p><p className="mt-1 text-xs text-[#6b6580]">{fmtSize(asrFile.size)}</p><p className="mt-2 text-xs text-accent-400">클릭하여 다른 파일 선택</p></>)
-                  : selectedExistingFile ? (<><MicIcon /><p className="mt-3 text-sm font-medium text-[#e8e4f0]">{selectedExistingFile}</p><p className="mt-2 text-xs text-accent-400">클릭하여 다른 파일 선택</p></>)
-                  : (<><UploadIcon /><p className="mt-3 text-sm text-[#a09bb5]">클릭하거나 파일을 드래그하세요</p><p className="mt-1 text-xs text-[#6b6580]">WAV, MP3, M4A, OGG, FLAC, WebM</p></>)}
+                {asrFile ? (<><MicIcon /><p className="mt-3 text-sm font-medium text-white">{asrFile.name}</p><p className="mt-1 text-sm text-gray-400">{fmtSize(asrFile.size)}</p><p className="mt-2 text-xs text-accent-400">클릭하여 다른 파일 선택</p></>)
+                  : selectedExistingFile ? (<><MicIcon /><p className="mt-3 text-sm font-medium text-white">{selectedExistingFile}</p><p className="mt-2 text-xs text-accent-400">클릭하여 다른 파일 선택</p></>)
+                  : (<><UploadIcon /><p className="mt-3 text-sm text-gray-300">클릭하거나 파일을 드래그하세요</p><p className="mt-1 text-sm text-gray-400">WAV, MP3, M4A, OGG, FLAC, WebM</p></>)}
                 <input ref={asrFileRef} type="file" accept=".wav,.m4a,.mp3,.ogg,.flac,.webm,audio/*" className="hidden"
                   onChange={(e) => { const f = e.target.files?.[0]; if (f) { setAsrFile(f); setSelectedExistingFile(null); setAsrStatus({ status: "idle", message: "" }); setTranscript(null); } e.target.value = ""; }} />
               </div>
@@ -3499,8 +3510,8 @@ Batch mode: paste multiple stories with tags:
               </button>
             </section>
             {(asrStatus.status === "loading" || asrStatus.status === "transcribing") && (
-              <section className="card"><div className="space-y-3"><div className="flex items-center gap-3"><Spinner /><span className="text-sm text-[#a09bb5]">{asrStatus.message}</span></div>
-                <div className="h-2 overflow-hidden rounded-full bg-[#241f33]"><div className="progress-pulse h-full rounded-full bg-gradient-to-r from-accent-600 to-purple-500" style={{ width: asrStatus.status === "loading" ? "30%" : "65%", transition: "width 0.5s ease" }} /></div></div></section>)}
+              <section className="card"><div className="space-y-3"><div className="flex items-center gap-3"><Spinner /><span className="text-sm text-gray-300">{asrStatus.message}</span></div>
+                <div className="h-2 overflow-hidden rounded-full bg-[#364153]"><div className="progress-pulse h-full rounded-full bg-gradient-to-r from-accent-600 to-purple-500" style={{ width: asrStatus.status === "loading" ? "30%" : "65%", transition: "width 0.5s ease" }} /></div></div></section>)}
             {asrStatus.status === "error" && <section className="card"><div className="rounded-lg border border-red-800/50 bg-red-900/20 px-4 py-3 text-sm text-red-300">{asrStatus.message}</div></section>}
             {transcript && asrStatus.status === "complete" && (
               <section className="card">
@@ -3509,18 +3520,18 @@ Batch mode: paste multiple stories with tags:
                     <button className="btn-primary text-xs" disabled={asrSaving} onClick={saveTranscript}>{asrSaved ? <><CheckIcon /> 저장됨</> : asrSaving ? "저장 중..." : "저장"}</button>
                     <button className="btn-secondary text-xs" onClick={copyTranscript}>{copied ? <><CheckIcon /> 복사됨</> : <><CopyIcon /> 복사</>}</button>
                     <button className="btn-secondary text-xs" onClick={downloadTranscript}><DownloadIcon /> 다운로드</button></div></div>
-                <div className="mb-4 flex gap-4 text-xs text-[#6b6580]"><span>오디오 길이: {fmtTime(transcript.duration)}</span><span>처리 시간: {transcript.processing_time.toFixed(1)}초</span></div>
+                <div className="mb-4 flex gap-4 text-sm text-gray-400"><span>오디오 길이: {fmtTime(transcript.duration)}</span><span>처리 시간: {transcript.processing_time.toFixed(1)}초</span></div>
                 <div className="space-y-2 max-h-[500px] overflow-y-auto pr-1">
                   {transcript.segments.map((seg, i) => { const color = SPEAKER_COLORS[(seg.speaker - 1) % SPEAKER_COLORS.length]; return (
                     <div key={i} className={`rounded-lg border ${color.border} ${color.bg} px-3 py-2`}>
-                      <div className="mb-1 flex items-center gap-2"><span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${color.label}`}>화자 {seg.speaker}</span><span className="text-[10px] text-[#6b6580]">{fmtTime(seg.start)} &ndash; {fmtTime(seg.end)}</span></div>
-                      <p className="text-sm text-[#e8e4f0]">{seg.text}</p></div>); })}
+                      <div className="mb-1 flex items-center gap-2"><span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${color.label}`}>화자 {seg.speaker}</span><span className="text-[10px] text-gray-400">{fmtTime(seg.start)} &ndash; {fmtTime(seg.end)}</span></div>
+                      <p className="text-sm text-white">{seg.text}</p></div>); })}
                 </div>
               </section>
             )}
           </div>
           <aside className="space-y-6">
-            <section className="card"><h2 className="mb-3 text-lg font-semibold">사용 방법</h2><ul className="space-y-2 text-sm text-[#a09bb5]">
+            <section className="card"><h2 className="mb-3 text-lg font-semibold">사용 방법</h2><ul className="space-y-2 text-sm text-gray-300">
               <li className="flex gap-2"><span className="text-accent-400">1.</span>음성 파일을 업로드하거나 파일 목록에서 선택하세요.</li>
               <li className="flex gap-2"><span className="text-accent-400">2.</span>화자 수를 선택하세요 (기본: 2명).</li>
               <li className="flex gap-2"><span className="text-accent-400">3.</span>&ldquo;음성 인식 시작&rdquo; 버튼을 클릭하면 자동 전사됩니다.</li>
@@ -3547,7 +3558,7 @@ Batch mode: paste multiple stories with tags:
                 <input ref={editorFileRef} type="file" accept=".txt,.srt,.vtt,.csv,.tsv,.md,.json" className="hidden"
                   onChange={(e) => { const f = e.target.files?.[0]; if (f) { const r = new FileReader(); r.onload = (ev) => { if (typeof ev.target?.result === "string") { setEditorText(ev.target.result); setRewrittenText(""); setRewriteStatus({ status: "idle", message: "" }); } }; r.readAsText(f); } e.target.value = ""; }} />
               </div>
-              <textarea className="input-field min-h-[250px] resize-y text-sm leading-relaxed" value={editorText} onChange={(e) => setEditorText(e.target.value)} placeholder="텍스트를 붙여넣거나, 파일을 열거나, 음성인식 결과를 불러오세요..." />
+              <textarea className="input-field min-h-[250px] resize-y text-base leading-relaxed" value={editorText} onChange={(e) => setEditorText(e.target.value)} placeholder="텍스트를 붙여넣거나, 파일을 열거나, 음성인식 결과를 불러오세요..." />
             </section>
             {editorText && (
               <section className="card">
@@ -3562,12 +3573,12 @@ Batch mode: paste multiple stories with tags:
                   <button className="btn-primary flex-1 text-base py-2.5" disabled={!editorText.trim() || isRewriting} onClick={rewriteText}>
                     {isRewriting && !rewriteStatus.message.includes("오타") ? <><Spinner /> 변환 중...</> : <><PenIcon /> 박완서 문체</>}</button>
                 </div>
-                <p className="mt-2 text-xs text-[#6b6580]">모델: {LLM_MODELS.find((m) => m.id === selectedModel)?.label ?? selectedModel} · 설정 탭에서 변경 가능</p>
+                <p className="mt-2 text-sm text-gray-400">모델: {LLM_MODELS.find((m) => m.id === selectedModel)?.label ?? selectedModel} · 설정 탭에서 변경 가능</p>
               </section>
             )}
             {rewriteStatus.status === "rewriting" && (
-              <section className="card"><div className="space-y-3"><div className="flex items-center gap-3"><Spinner /><span className="text-sm text-[#a09bb5]">{rewriteStatus.message}</span></div>
-                <div className="h-2 overflow-hidden rounded-full bg-[#241f33]"><div className="progress-pulse h-full rounded-full bg-gradient-to-r from-accent-600 to-purple-500" style={{ width: "60%", transition: "width 0.5s ease" }} /></div></div></section>)}
+              <section className="card"><div className="space-y-3"><div className="flex items-center gap-3"><Spinner /><span className="text-sm text-gray-300">{rewriteStatus.message}</span></div>
+                <div className="h-2 overflow-hidden rounded-full bg-[#364153]"><div className="progress-pulse h-full rounded-full bg-gradient-to-r from-accent-600 to-purple-500" style={{ width: "60%", transition: "width 0.5s ease" }} /></div></div></section>)}
             {rewriteStatus.status === "error" && <section className="card"><div className="rounded-lg border border-red-800/50 bg-red-900/20 px-4 py-3 text-sm text-red-300">{rewriteStatus.message}</div></section>}
             {rewrittenText && rewriteStatus.status === "complete" && (
               <section className="card">
@@ -3580,18 +3591,18 @@ Batch mode: paste multiple stories with tags:
                     <button className="btn-secondary text-xs" onClick={async () => { await navigator.clipboard.writeText(rewrittenText); }}><CopyIcon /> 복사</button>
                     <button className="btn-secondary text-xs" onClick={() => { const b = new Blob([rewrittenText], { type: "text/plain;charset=utf-8" }); const u = URL.createObjectURL(b); const a = document.createElement("a"); a.href = u; a.download = "rewritten.txt"; a.click(); URL.revokeObjectURL(u); }}><DownloadIcon /> 다운로드</button>
                   </div></div>
-                <textarea className="input-field min-h-[250px] resize-y text-sm leading-relaxed border-purple-500/30 bg-purple-500/10 text-[#e8e4f0]" value={rewrittenText} onChange={(e) => setRewrittenText(e.target.value)} />
+                <textarea className="input-field min-h-[250px] resize-y text-base leading-relaxed border-purple-500/30 bg-purple-500/10 text-white" value={rewrittenText} onChange={(e) => setRewrittenText(e.target.value)} />
               </section>
             )}
           </div>
           <aside className="space-y-6">
-            <section className="card"><h2 className="mb-3 text-lg font-semibold">사용 방법</h2><ul className="space-y-2 text-sm text-[#a09bb5]">
+            <section className="card"><h2 className="mb-3 text-lg font-semibold">사용 방법</h2><ul className="space-y-2 text-sm text-gray-300">
               <li className="flex gap-2"><span className="text-accent-400">1.</span>음성인식 탭에서 인식을 완료한 후 이 탭으로 이동하세요.</li>
               <li className="flex gap-2"><span className="text-accent-400">2.</span>화자 삭제 버튼으로 특정 화자의 발화를 제거할 수 있습니다.</li>
               <li className="flex gap-2"><span className="text-accent-400">3.</span>&ldquo;박완서 문체&rdquo; 버튼을 클릭하면 AI가 문체를 변환합니다.</li>
               <li className="flex gap-2"><span className="text-accent-400">4.</span>설정 탭에서 사용할 LLM 모델을 변경할 수 있습니다.</li>
             </ul></section>
-            <section className="card"><h2 className="mb-3 text-lg font-semibold">박완서 문체란?</h2><p className="text-sm text-[#a09bb5] leading-relaxed">박완서(1931–2011)는 한국 문학의 거장으로, 일상의 세밀한 관찰, 솔직하고 담담한 어조, 깊은 감정 묘사, 사회 비판적 시선이 특징입니다.</p></section>
+            <section className="card"><h2 className="mb-3 text-lg font-semibold">박완서 문체란?</h2><p className="text-sm text-gray-300 leading-relaxed">박완서(1931–2011)는 한국 문학의 거장으로, 일상의 세밀한 관찰, 솔직하고 담담한 어조, 깊은 감정 묘사, 사회 비판적 시선이 특징입니다.</p></section>
           </aside>
         </div>
       )}
@@ -3603,15 +3614,15 @@ Batch mode: paste multiple stories with tags:
           <section className="card">
             <h2 className="mb-3 text-lg font-semibold">🎵 소스 오디오</h2>
             {sourceProject?.source_audio_original_name ? (
-              <div className="flex items-center gap-3 rounded-lg bg-[#1e1a30] px-4 py-3">
+              <div className="flex items-center gap-3 rounded-lg bg-[#1e2939] px-4 py-3">
                 <MicIcon />
                 <div className="min-w-0 flex-1">
-                  <p className="font-medium text-[#ddd8ee] truncate">{sourceProject.source_audio_original_name}</p>
-                  <p className="text-xs text-[#8a84a0]">{fmtSize(sourceProject.source_audio_size)}{sourceProject.asr_audio_duration > 0 && ` · ${fmtDuration(sourceProject.asr_audio_duration)}`}</p>
+                  <p className="font-medium text-[#e5e7eb] truncate">{sourceProject.source_audio_original_name}</p>
+                  <p className="text-sm text-gray-400">{fmtSize(sourceProject.source_audio_size)}{sourceProject.asr_audio_duration > 0 && ` · ${fmtDuration(sourceProject.asr_audio_duration)}`}</p>
                 </div>
               </div>
             ) : (
-              <p className="text-sm text-[#6b6580]">소스 오디오가 없습니다. 음성녹음 또는 음성인식 탭에서 오디오를 추가하세요.</p>
+              <p className="text-sm text-gray-400">소스 오디오가 없습니다. 음성녹음 또는 음성인식 탭에서 오디오를 추가하세요.</p>
             )}
           </section>
 
@@ -3620,27 +3631,27 @@ Batch mode: paste multiple stories with tags:
             <section className="card">
               <div className="mb-3 flex items-center justify-between">
                 <h2 className="text-lg font-semibold">🎧 오디오 파일 목록</h2>
-                <span className="text-xs text-[#6b6580]">{srcAudioFiles.length}개 파일 · 클릭하여 음성 클립 추출</span>
+                <span className="text-sm text-gray-400">{srcAudioFiles.length}개 파일 · 클릭하여 음성 클립 추출</span>
               </div>
               <div className="max-h-[300px] overflow-y-auto space-y-1.5">
                 {srcAudioFiles.map((af) => (
-                  <div key={af.filename} className="flex items-center rounded-lg bg-[#1e1a2e] border border-transparent hover:bg-[#2a2540] hover:border-accent-500/30 transition-colors">
+                  <div key={af.filename} className="flex items-center rounded-lg bg-[#1e2939] border border-transparent hover:bg-[#1e2939] hover:border-accent-500/30 transition-colors">
                     <button onClick={() => openClipModal(af)} className="flex-1 min-w-0 px-4 py-3 text-left">
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2 min-w-0">
                           <MicIcon />
-                          <span className="text-sm text-[#e8e4f0] truncate">{af.original_name || af.filename}</span>
+                          <span className="text-sm text-white truncate">{af.original_name || af.filename}</span>
                           {af.file_type === "output" && <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-900/40 text-green-400 shrink-0">TTS</span>}
                         </div>
                         <div className="flex items-center gap-3 shrink-0 ml-2">
-                          <span className="text-xs text-[#6b6580]">{fmtSize(af.size)}</span>
-                          <span className="text-xs text-[#6b6580]">{fmtDate(af.created_at || af.modified || "")}</span>
+                          <span className="text-sm text-gray-400">{fmtSize(af.size)}</span>
+                          <span className="text-sm text-gray-400">{fmtDate(af.created_at || af.modified || "")}</span>
                           <span className="text-[10px] text-accent-400">편집</span>
                         </div>
                       </div>
                     </button>
                     <a href={`/api/audio-files/${encodeURIComponent(af.filename)}`} download
-                      className="shrink-0 p-3 text-[#6b6580] hover:text-accent-400 transition-colors" title="다운로드">
+                      className="shrink-0 p-3 text-gray-400 hover:text-accent-400 transition-colors" title="다운로드">
                       <DownloadIcon />
                     </a>
                   </div>
@@ -3654,7 +3665,7 @@ Batch mode: paste multiple stories with tags:
             <section className="card">
               <div className="mb-3 flex items-center justify-between">
                 <h2 className="text-lg font-semibold">📄 텍스트 파일</h2>
-                <span className="text-xs text-[#6b6580]">{srcArtifacts.length}개 파일</span>
+                <span className="text-sm text-gray-400">{srcArtifacts.length}개 파일</span>
               </div>
               <div className="space-y-1.5">
                 {srcArtifacts.map((a) => {
@@ -3676,25 +3687,25 @@ Batch mode: paste multiple stories with tags:
                       }
                       setExpandedArtifacts(next);
                     }}
-                      className="flex items-center justify-between w-full rounded-lg bg-[#1e1a2e] border border-transparent hover:bg-[#2a2540] hover:border-accent-500/30 px-4 py-3 text-left transition-colors">
+                      className="flex items-center justify-between w-full rounded-lg bg-[#1e2939] border border-transparent hover:bg-[#1e2939] hover:border-accent-500/30 px-4 py-3 text-left transition-colors">
                       <div className="flex items-center gap-2 min-w-0">
                         <span className={`text-xs transition-transform ${isOpen ? "rotate-90" : ""}`}>&#9654;</span>
                         <div className="min-w-0">
-                          <span className="text-sm text-[#e8e4f0] truncate block">{a.filename}</span>
-                          <span className="text-[10px] text-[#6b6580]">{a.label}</span>
+                          <span className="text-sm text-white truncate block">{a.filename}</span>
+                          <span className="text-[10px] text-gray-400">{a.label}</span>
                         </div>
                       </div>
                       <div className="flex items-center gap-3 shrink-0 ml-2">
-                        <span className="text-xs text-[#6b6580]">{fmtSize(a.file_size)}</span>
-                        <span className="text-xs text-[#6b6580]">{fmtDate(a.created_at)}</span>
+                        <span className="text-sm text-gray-400">{fmtSize(a.file_size)}</span>
+                        <span className="text-sm text-gray-400">{fmtDate(a.created_at)}</span>
                       </div>
                     </button>
                     {isOpen && (
-                      <div className="mt-1 rounded-lg bg-[#161225] border border-[#2e2845] px-4 py-3">
+                      <div className="mt-1 rounded-lg bg-[#101828] border border-[#364153] px-4 py-3">
                         {artifactContents[a.filename] ? (
-                          <pre className="text-sm text-[#c8c4d8] whitespace-pre-wrap max-h-[400px] overflow-y-auto leading-relaxed">{artifactContents[a.filename]}</pre>
+                          <pre className="text-sm text-[#d1d5dc] whitespace-pre-wrap max-h-[400px] overflow-y-auto leading-relaxed">{artifactContents[a.filename]}</pre>
                         ) : (
-                          <p className="text-sm text-[#6b6580]">로딩 중...</p>
+                          <p className="text-sm text-gray-400">로딩 중...</p>
                         )}
                       </div>
                     )}
@@ -3710,14 +3721,14 @@ Batch mode: paste multiple stories with tags:
             <div className="mb-3 flex items-center justify-between">
               <h2 className="text-lg font-semibold">🎙 음성인식 원본 (ASR)</h2>
               <div className="flex items-center gap-3">
-                {srcTranscript && <span className="text-xs text-[#b8b0cc]">{srcTranscript.length.toLocaleString()}자 · {countWords(srcTranscript).toLocaleString()}단어</span>}
+                {srcTranscript && <span className="text-sm text-gray-300">{srcTranscript.length.toLocaleString()}자 · {countWords(srcTranscript).toLocaleString()}단어</span>}
                 <button className="btn-secondary text-xs" disabled={srcSaving === "transcript_text"}
                   onClick={() => saveSourceField("transcript_text", srcTranscript)}>
                   {srcSaving === "transcript_text" ? "저장 중..." : "저장"}
                 </button>
               </div>
             </div>
-            <textarea className="input-field min-h-[180px] resize-y text-sm leading-relaxed"
+            <textarea className="input-field min-h-[180px] resize-y text-base leading-relaxed"
               value={srcTranscript} onChange={(e) => setSrcTranscript(e.target.value)}
               placeholder="음성인식 결과가 여기에 표시됩니다. 비어있으면 직접 입력할 수 있습니다." />
           </section>
@@ -3727,14 +3738,14 @@ Batch mode: paste multiple stories with tags:
             <div className="mb-3 flex items-center justify-between">
               <h2 className="text-lg font-semibold">✏️ 편집된 녹취록</h2>
               <div className="flex items-center gap-3">
-                {srcEdited && <span className="text-xs text-[#b8b0cc]">{srcEdited.length.toLocaleString()}자 · {countWords(srcEdited).toLocaleString()}단어</span>}
+                {srcEdited && <span className="text-sm text-gray-300">{srcEdited.length.toLocaleString()}자 · {countWords(srcEdited).toLocaleString()}단어</span>}
                 <button className="btn-secondary text-xs" disabled={srcSaving === "edited_transcript"}
                   onClick={() => saveSourceField("edited_transcript", srcEdited)}>
                   {srcSaving === "edited_transcript" ? "저장 중..." : "저장"}
                 </button>
               </div>
             </div>
-            <textarea className="input-field min-h-[180px] resize-y text-sm leading-relaxed border-orange-500/20 bg-orange-500/5"
+            <textarea className="input-field min-h-[180px] resize-y text-base leading-relaxed border-orange-500/20 bg-orange-500/5"
               value={srcEdited} onChange={(e) => setSrcEdited(e.target.value)}
               placeholder="글편집 탭에서 오타수정/화자삭제 등의 편집 결과가 저장됩니다. 직접 입력할 수도 있습니다." />
           </section>
@@ -3744,18 +3755,18 @@ Batch mode: paste multiple stories with tags:
             <div className="mb-3 flex items-center justify-between">
               <h2 className="text-lg font-semibold">🖊 LLM 변환 텍스트</h2>
               <div className="flex items-center gap-3">
-                {srcRewritten && <span className="text-xs text-[#b8b0cc]">{srcRewritten.length.toLocaleString()}자 · {countWords(srcRewritten).toLocaleString()}단어</span>}
+                {srcRewritten && <span className="text-sm text-gray-300">{srcRewritten.length.toLocaleString()}자 · {countWords(srcRewritten).toLocaleString()}단어</span>}
                 <button className="btn-secondary text-xs" disabled={srcSaving === "rewritten_text"}
                   onClick={() => saveSourceField("rewritten_text", srcRewritten)}>
                   {srcSaving === "rewritten_text" ? "저장 중..." : "저장"}
                 </button>
               </div>
             </div>
-            <textarea className="input-field min-h-[180px] resize-y text-sm leading-relaxed border-violet-500/20 bg-violet-500/5"
+            <textarea className="input-field min-h-[180px] resize-y text-base leading-relaxed border-violet-500/20 bg-violet-500/5"
               value={srcRewritten} onChange={(e) => setSrcRewritten(e.target.value)}
               placeholder="박완서 문체 변환 결과가 여기에 저장됩니다. 직접 입력할 수도 있습니다." />
             {srcRewritten && (
-              <p className="mt-2 text-xs text-[#8a84a0]">
+              <p className="mt-2 text-sm text-gray-400">
                 이 텍스트가 오디오북생성 탭의 &quot;Text to Speak&quot;에 사용됩니다.
               </p>
             )}
@@ -3772,37 +3783,59 @@ Batch mode: paste multiple stories with tags:
                 if (!summary || Object.keys(summary).length === 0) return null;
                 const stepLabels: Record<string, string> = { audio: "낭독 음성", image_prompt: "이미지 프롬프트", image: "배경 이미지", video_prompt: "영상 프롬프트", video: "숏폼 영상" };
                 const totalElapsed = Object.values(summary).reduce((s: number, v: any) => s + (v?.elapsed || 0), 0);
+                const KRW_PER_USD = 1380;
+                const IMAGE_COST_USD = 0.02;
+                const stepCost = (d: any, step: string): number => {
+                  if (!d) return 0;
+                  if (step === "image") return IMAGE_COST_USD;
+                  if (d.input_tokens != null && d.output_tokens != null && d.model) {
+                    const rates = LLM_RATES[d.model];
+                    if (rates) return (d.input_tokens * rates[0] + d.output_tokens * rates[1]) / 1_000_000;
+                  }
+                  return 0;
+                };
+                const totalCostUsd = (["audio", "image_prompt", "image", "video_prompt", "video"] as const).reduce((s, step) => s + stepCost(summary[step], step), 0);
+                const totalCostKrw = Math.round(totalCostUsd * KRW_PER_USD);
+                const totalTokensIn = (["image_prompt", "video_prompt"] as const).reduce((s, step) => s + (summary[step]?.input_tokens || 0), 0);
+                const totalTokensOut = (["image_prompt", "video_prompt"] as const).reduce((s, step) => s + (summary[step]?.output_tokens || 0), 0);
                 return (
                   <div className="mb-4">
                     <button onClick={() => setPsSummaryOpen(!psSummaryOpen)}
-                      className="flex items-center gap-2 w-full rounded-lg bg-[#1e1a30] border border-accent-500/20 px-4 py-2.5 text-left hover:bg-[#2a2540] transition-colors">
+                      className="flex items-center gap-2 w-full rounded-lg bg-[#1e2939] border border-accent-500/20 px-4 py-2.5 text-left hover:bg-[#1e2939] transition-colors">
                       <span className={`text-xs transition-transform ${psSummaryOpen ? "rotate-90" : ""}`}>&#9654;</span>
                       <span className="text-sm font-medium text-accent-300">Summary</span>
-                      <span className="text-xs text-[#6b6580] ml-auto">{Object.keys(summary).length}단계 · 총 {totalElapsed.toFixed(1)}초</span>
+                      <span className="text-sm text-gray-400 ml-auto">{Object.keys(summary).length}단계 · 총 {totalElapsed.toFixed(1)}초 · 토큰 {totalTokensIn.toLocaleString()}→{totalTokensOut.toLocaleString()} · ₩{totalCostKrw.toLocaleString()} (${totalCostUsd.toFixed(4)})</span>
                     </button>
                     {psSummaryOpen && (
-                      <div className="mt-1 rounded-lg bg-[#161225] border border-[#2e2845] px-4 py-3 space-y-3">
+                      <div className="mt-1 rounded-lg bg-[#101828] border border-[#364153] px-4 py-3 space-y-3">
                         {(["audio", "image_prompt", "image", "video_prompt", "video"] as const).map((step) => {
                           const d = summary[step];
                           if (!d) return null;
+                          const cost = stepCost(d, step);
+                          const costKrw = Math.round(cost * KRW_PER_USD);
                           return (
-                            <div key={step} className="text-xs leading-relaxed">
+                            <div key={step} className="text-sm leading-relaxed">
                               <div className="flex items-center gap-2 mb-1">
-                                <span className="font-medium text-[#e8e4f0]">{stepLabels[step]}</span>
-                                <span className="text-[#6b6580]">—</span>
+                                <span className="font-medium text-white">{stepLabels[step]}</span>
+                                <span className="text-gray-400">—</span>
                                 <span className="text-accent-400 font-mono">{d.model}</span>
                               </div>
-                              <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-[#8a84a0] pl-2">
-                                {d.api_key && <span>API Key: <span className="font-mono text-[#a09bb5]">{d.api_key}</span></span>}
-                                {d.elapsed != null && <span>생성시간: <span className="text-[#c8c4d8]">{d.elapsed}초</span></span>}
-                                {d.size != null && <span>크기: <span className="text-[#c8c4d8]">{d.size >= 1048576 ? (d.size / 1048576).toFixed(1) + "MB" : (d.size / 1024).toFixed(0) + "KB"}</span></span>}
-                                {d.duration != null && <span>길이: <span className="text-[#c8c4d8]">{d.duration.toFixed(1)}초</span></span>}
-                                {d.input_tokens != null && <span>토큰: <span className="text-[#c8c4d8]">{d.input_tokens}→{d.output_tokens}</span></span>}
-                                {d.voice && <span>음성: <span className="text-[#c8c4d8]">{d.voice}</span></span>}
+                              <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-gray-400 pl-2">
+                                {d.api_key && <span>API Key: <span className="font-mono text-gray-300">{d.api_key}</span></span>}
+                                {d.elapsed != null && <span>생성시간: <span className="text-gray-300">{d.elapsed}초</span></span>}
+                                {d.size != null && <span>크기: <span className="text-gray-300">{d.size >= 1048576 ? (d.size / 1048576).toFixed(1) + "MB" : (d.size / 1024).toFixed(0) + "KB"}</span></span>}
+                                {d.duration != null && <span>길이: <span className="text-gray-300">{d.duration.toFixed(1)}초</span></span>}
+                                {d.input_tokens != null && <span>토큰: <span className="text-gray-300">{d.input_tokens}→{d.output_tokens}</span></span>}
+                                {d.voice && <span>음성: <span className="text-gray-300">{d.voice}</span></span>}
+                                {cost > 0 && <span>비용: <span className="text-amber-300 font-medium">₩{costKrw.toLocaleString()}</span> <span className="text-gray-400">(${cost.toFixed(4)})</span></span>}
                               </div>
                             </div>
                           );
                         })}
+                        <div className="border-t border-[#364153] pt-2 mt-2 flex items-center justify-between text-sm">
+                          <span className="text-gray-400">총 토큰: <span className="text-white font-medium">{totalTokensIn.toLocaleString()} → {totalTokensOut.toLocaleString()}</span> ({(totalTokensIn + totalTokensOut).toLocaleString()})</span>
+                          <span className="text-gray-400">총 비용: <span className="text-amber-300 font-semibold">₩{totalCostKrw.toLocaleString()}</span> <span className="text-gray-400">(${totalCostUsd.toFixed(4)})</span></span>
+                        </div>
                       </div>
                     )}
                   </div>
@@ -3811,19 +3844,19 @@ Batch mode: paste multiple stories with tags:
 
               <div className="space-y-3">
                 {/* 1. Audio */}
-                <div className="rounded-lg bg-[#1e1a2e] border border-transparent px-4 py-3">
+                <div className="rounded-lg bg-[#1e2939] border border-transparent px-4 py-3">
                   <div className="flex items-center justify-between mb-1">
                     <div className="flex items-center gap-2">
                       <span className="text-xs font-mono px-1.5 py-0.5 rounded bg-blue-900/40 text-blue-300">1</span>
-                      <span className="text-sm font-medium text-[#e8e4f0]">낭독 음성</span>
+                      <span className="text-sm font-medium text-white">낭독 음성</span>
                     </div>
                     {sourceProject.poem_audio_filename ? (
                       <div className="flex items-center gap-2">
                         <span className="text-xs text-green-400">{sourceProject.poem_audio_filename}</span>
-                        {sourceProject.poem_audio_duration > 0 && <span className="text-xs text-[#6b6580]">{fmtDuration(sourceProject.poem_audio_duration)}</span>}
-                        <a href={`/api/outputs/${sourceProject.poem_audio_filename}`} download className="text-[#6b6580] hover:text-accent-400 transition-colors" title="다운로드"><DownloadIcon /></a>
+                        {sourceProject.poem_audio_duration > 0 && <span className="text-sm text-gray-400">{fmtDuration(sourceProject.poem_audio_duration)}</span>}
+                        <a href={`/api/outputs/${sourceProject.poem_audio_filename}`} download className="text-gray-400 hover:text-accent-400 transition-colors" title="다운로드"><DownloadIcon /></a>
                       </div>
-                    ) : <span className="text-xs text-[#6b6580]">미생성</span>}
+                    ) : <span className="text-sm text-gray-400">미생성</span>}
                   </div>
                   {sourceProject.poem_audio_filename && (
                     <audio src={`/api/outputs/${sourceProject.poem_audio_filename}`} controls className="w-full h-8 mt-2" />
@@ -3831,32 +3864,32 @@ Batch mode: paste multiple stories with tags:
                 </div>
 
                 {/* 2. Image Prompt */}
-                <div className="rounded-lg bg-[#1e1a2e] border border-transparent px-4 py-3">
+                <div className="rounded-lg bg-[#1e2939] border border-transparent px-4 py-3">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <span className="text-xs font-mono px-1.5 py-0.5 rounded bg-purple-900/40 text-purple-300">2</span>
-                      <span className="text-sm font-medium text-[#e8e4f0]">이미지 프롬프트</span>
+                      <span className="text-sm font-medium text-white">이미지 프롬프트</span>
                     </div>
-                    {sourceProject.poem_image_prompt ? <span className="text-xs text-green-400">생성됨</span> : <span className="text-xs text-[#6b6580]">미생성</span>}
+                    {sourceProject.poem_image_prompt ? <span className="text-xs text-green-400">생성됨</span> : <span className="text-sm text-gray-400">미생성</span>}
                   </div>
                   {sourceProject.poem_image_prompt && (
-                    <p className="mt-2 text-xs text-[#a09bb5] leading-relaxed whitespace-pre-wrap max-h-[120px] overflow-y-auto">{sourceProject.poem_image_prompt}</p>
+                    <p className="mt-2 text-sm text-gray-300 leading-relaxed whitespace-pre-wrap max-h-[120px] overflow-y-auto">{sourceProject.poem_image_prompt}</p>
                   )}
                 </div>
 
                 {/* 3. Background Image */}
-                <div className="rounded-lg bg-[#1e1a2e] border border-transparent px-4 py-3">
+                <div className="rounded-lg bg-[#1e2939] border border-transparent px-4 py-3">
                   <div className="flex items-center justify-between mb-1">
                     <div className="flex items-center gap-2">
                       <span className="text-xs font-mono px-1.5 py-0.5 rounded bg-emerald-900/40 text-emerald-300">3</span>
-                      <span className="text-sm font-medium text-[#e8e4f0]">배경 이미지</span>
+                      <span className="text-sm font-medium text-white">배경 이미지</span>
                     </div>
                     {sourceProject.poem_image_filename ? (
                       <div className="flex items-center gap-2">
                         <span className="text-xs text-green-400">{sourceProject.poem_image_filename}</span>
-                        <a href={`/api/infographics/${sourceProject.poem_image_filename}`} download className="text-[#6b6580] hover:text-accent-400 transition-colors" title="다운로드"><DownloadIcon /></a>
+                        <a href={`/api/infographics/${sourceProject.poem_image_filename}`} download className="text-gray-400 hover:text-accent-400 transition-colors" title="다운로드"><DownloadIcon /></a>
                       </div>
-                    ) : <span className="text-xs text-[#6b6580]">미생성</span>}
+                    ) : <span className="text-sm text-gray-400">미생성</span>}
                   </div>
                   {sourceProject.poem_image_filename && (
                     <img src={`/api/infographics/${sourceProject.poem_image_filename}`} alt="배경" className="mt-2 rounded-lg max-h-[200px] object-contain" />
@@ -3864,33 +3897,33 @@ Batch mode: paste multiple stories with tags:
                 </div>
 
                 {/* 4. Video Prompt */}
-                <div className="rounded-lg bg-[#1e1a2e] border border-transparent px-4 py-3">
+                <div className="rounded-lg bg-[#1e2939] border border-transparent px-4 py-3">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <span className="text-xs font-mono px-1.5 py-0.5 rounded bg-amber-900/40 text-amber-300">4</span>
-                      <span className="text-sm font-medium text-[#e8e4f0]">영상 프롬프트</span>
+                      <span className="text-sm font-medium text-white">영상 프롬프트</span>
                     </div>
-                    {sourceProject.poem_video_prompt ? <span className="text-xs text-green-400">생성됨</span> : <span className="text-xs text-[#6b6580]">미생성</span>}
+                    {sourceProject.poem_video_prompt ? <span className="text-xs text-green-400">생성됨</span> : <span className="text-sm text-gray-400">미생성</span>}
                   </div>
                   {sourceProject.poem_video_prompt && (
-                    <p className="mt-2 text-xs text-[#a09bb5] leading-relaxed whitespace-pre-wrap max-h-[120px] overflow-y-auto">{sourceProject.poem_video_prompt}</p>
+                    <p className="mt-2 text-sm text-gray-300 leading-relaxed whitespace-pre-wrap max-h-[120px] overflow-y-auto">{sourceProject.poem_video_prompt}</p>
                   )}
                 </div>
 
                 {/* 5. Video */}
-                <div className="rounded-lg bg-[#1e1a2e] border border-transparent px-4 py-3">
+                <div className="rounded-lg bg-[#1e2939] border border-transparent px-4 py-3">
                   <div className="flex items-center justify-between mb-1">
                     <div className="flex items-center gap-2">
                       <span className="text-xs font-mono px-1.5 py-0.5 rounded bg-red-900/40 text-red-300">5</span>
-                      <span className="text-sm font-medium text-[#e8e4f0]">숏폼 영상</span>
+                      <span className="text-sm font-medium text-white">숏폼 영상</span>
                     </div>
                     {sourceProject.poem_video_filename ? (
                       <div className="flex items-center gap-2">
                         <span className="text-xs text-green-400">{sourceProject.poem_video_filename}</span>
-                        {sourceProject.poem_gen_elapsed > 0 && <span className="text-xs text-[#6b6580]">{sourceProject.poem_gen_elapsed}초</span>}
-                        <a href={`/api/videos/${sourceProject.poem_video_filename}`} download className="text-[#6b6580] hover:text-accent-400 transition-colors" title="다운로드"><DownloadIcon /></a>
+                        {sourceProject.poem_gen_elapsed > 0 && <span className="text-sm text-gray-400">{sourceProject.poem_gen_elapsed}초</span>}
+                        <a href={`/api/videos/${sourceProject.poem_video_filename}`} download className="text-gray-400 hover:text-accent-400 transition-colors" title="다운로드"><DownloadIcon /></a>
                       </div>
-                    ) : <span className="text-xs text-[#6b6580]">미생성</span>}
+                    ) : <span className="text-sm text-gray-400">미생성</span>}
                   </div>
                   {sourceProject.poem_video_filename && (
                     <video src={`/api/videos/${sourceProject.poem_video_filename}`} controls className="mt-2 rounded-lg w-full max-h-[300px]" />
@@ -3907,33 +3940,33 @@ Batch mode: paste multiple stories with tags:
         <div className="mx-auto max-w-2xl space-y-6">
           <section className="card">
             <h2 className="mb-4 text-lg font-semibold">TTS 엔진 설정</h2>
-            <p className="mb-4 text-sm text-[#a09bb5]">오디오북 생성에 사용할 TTS 엔진을 선택하세요.</p>
+            <p className="mb-4 text-sm text-gray-300">오디오북 생성에 사용할 TTS 엔진을 선택하세요.</p>
             <div className="space-y-2">
               <button disabled
-                className="w-full rounded-lg px-4 py-3 text-left text-sm bg-[#1e1a2e] border border-transparent text-[#6b6580] cursor-not-allowed opacity-50">
+                className="w-full rounded-lg px-4 py-3 text-left text-sm bg-[#1e2939] border border-transparent text-gray-400 cursor-not-allowed opacity-50">
                 <div className="flex items-center justify-between">
                   <div><span className="font-medium">ElevenLabs</span><span className="ml-2 rounded px-1.5 py-0.5 text-[10px] bg-gray-500/20 text-gray-400">비활성</span></div>
                 </div>
-                <p className="mt-1 text-xs text-[#6b6580]">API 키 갱신 필요</p>
+                <p className="mt-1 text-sm text-gray-400">API 키 갱신 필요</p>
               </button>
               <button onClick={() => { setTtsEngine("qwen3"); setLanguage("Korean"); const pref = voices.find((v) => v.id === "upload-be0916e0-세월"); if (voices.length > 0) setSelectedVoice(pref?.id || voices[0].id); }}
-                className={`w-full rounded-lg px-4 py-3 text-left text-sm transition-colors ${ttsEngine === "qwen3" ? "bg-accent-600/30 border border-accent-500/50 text-white" : "bg-[#1e1a2e] border border-transparent hover:bg-[#2a2540] text-[#c0bcd0]"}`}>
+                className={`w-full rounded-lg px-4 py-3 text-left text-sm transition-colors ${ttsEngine === "qwen3" ? "bg-accent-600/30 border border-accent-500/50 text-white" : "bg-[#1e2939] border border-transparent hover:bg-[#1e2939] text-[#d1d5dc]"}`}>
                 <div className="flex items-center justify-between">
                   <div><span className="font-medium">Qwen3-TTS 1.7B</span><span className="ml-2 rounded px-1.5 py-0.5 text-[10px] bg-blue-500/20 text-blue-300">Local GPU</span></div>
                   {ttsEngine === "qwen3" && <span className="text-xs text-accent-400">선택됨</span>}
                 </div>
-                <p className="mt-1 text-xs text-[#6b6580]">로컬 GPU 음성 클론, 무료, 느림 (GB10)</p>
+                <p className="mt-1 text-sm text-gray-400">로컬 GPU 음성 클론, 무료, 느림 (GB10)</p>
               </button>
             </div>
           </section>
           <section className="card">
             <h2 className="mb-4 text-lg font-semibold">LLM 모델 설정</h2>
-            <p className="mb-4 text-sm text-[#a09bb5]">글편집 탭의 오타수정 및 문체 변환에 사용할 LLM 모델을 선택하세요.</p>
+            <p className="mb-4 text-sm text-gray-300">글편집 탭의 오타수정 및 문체 변환에 사용할 LLM 모델을 선택하세요.</p>
             <div className="space-y-2">
               {LLM_MODELS.map((m) => (
                 <button key={m.id} onClick={() => setSelectedModel(m.id)}
-                  className={`w-full rounded-lg px-4 py-3 text-left text-sm transition-colors ${selectedModel === m.id ? "bg-accent-600/30 border border-accent-500/50 text-white" : "bg-[#1e1a2e] border border-transparent hover:bg-[#2a2540] text-[#c0bcd0]"}`}>
-                  <div className="flex items-center justify-between"><div><span className="font-medium">{m.label}</span><span className="ml-2 rounded px-1.5 py-0.5 text-[10px] bg-[#2e2845] text-[#a09bb5]">{m.provider}</span></div>
+                  className={`w-full rounded-lg px-4 py-3 text-left text-sm transition-colors ${selectedModel === m.id ? "bg-accent-600/30 border border-accent-500/50 text-white" : "bg-[#1e2939] border border-transparent hover:bg-[#1e2939] text-[#d1d5dc]"}`}>
+                  <div className="flex items-center justify-between"><div><span className="font-medium">{m.label}</span><span className="ml-2 rounded px-1.5 py-0.5 text-[10px] bg-[#364153] text-gray-300">{m.provider}</span></div>
                     {selectedModel === m.id && <span className="text-xs text-accent-400">선택됨</span>}</div>
                 </button>
               ))}
@@ -3948,7 +3981,7 @@ Batch mode: paste multiple stories with tags:
                 <button className="btn-secondary text-xs" onClick={vcReset}>초기화</button>
               )}
             </div>
-            <p className="mb-4 text-sm text-[#a09bb5]">Qwen3-TTS로 음성을 복제하려면 3초 이상의 음성 샘플과 해당 스크립트를 등록하세요.</p>
+            <p className="mb-4 text-sm text-gray-300">Qwen3-TTS로 음성을 복제하려면 3초 이상의 음성 샘플과 해당 스크립트를 등록하세요.</p>
 
             {/* Record / Upload area */}
             {vcMode === "idle" && (
@@ -3963,7 +3996,7 @@ Batch mode: paste multiple stories with tags:
                   <input ref={vcFileRef} type="file" accept=".wav,.m4a,.mp3,.ogg,.flac,.webm,audio/*" className="hidden"
                     onChange={(e) => { const f = e.target.files?.[0]; if (f) vcHandleFile(f); e.target.value = ""; }} />
                 </div>
-                <p className="text-xs text-[#6b6580]">WAV, MP3, M4A, WebM 등 지원 (최대 50MB, 권장 3~30초)</p>
+                <p className="text-sm text-gray-400">WAV, MP3, M4A, WebM 등 지원 (최대 50MB, 권장 3~30초)</p>
               </div>
             )}
 
@@ -3971,7 +4004,7 @@ Batch mode: paste multiple stories with tags:
             {vcMode === "recording" && (
               <div className="space-y-3">
                 <div className="relative">
-                  <canvas ref={vcCanvasRef} width={600} height={80} className="w-full rounded-lg bg-[#1e1a2e]" />
+                  <canvas ref={vcCanvasRef} width={600} height={80} className="w-full rounded-lg bg-[#1e2939]" />
                   <div className="absolute right-3 top-2 flex items-center gap-2">
                     <span className="h-2.5 w-2.5 rounded-full bg-red-500 animate-pulse" />
                     <span className="font-mono text-sm text-red-400">{Math.floor(vcElapsed / 60)}:{(vcElapsed % 60).toString().padStart(2, "0")}</span>
@@ -3988,10 +4021,10 @@ Batch mode: paste multiple stories with tags:
               <div className="space-y-4">
                 {/* Audio preview */}
                 {vcAudioUrl && (
-                  <div className="rounded-lg bg-[#1e1a2e] p-3">
+                  <div className="rounded-lg bg-[#1e2939] p-3">
                     <div className="mb-1 flex items-center justify-between">
-                      <span className="text-xs text-[#6b6580]">음성 미리듣기</span>
-                      {vcElapsed > 0 && <span className="text-xs text-[#6b6580]">녹음: {vcElapsed}초</span>}
+                      <span className="text-sm text-gray-400">음성 미리듣기</span>
+                      {vcElapsed > 0 && <span className="text-sm text-gray-400">녹음: {vcElapsed}초</span>}
                     </div>
                     <audio src={vcAudioUrl} controls className="w-full h-8" style={{ filter: "invert(0.85) hue-rotate(180deg)" }} />
                   </div>
@@ -4016,11 +4049,11 @@ Batch mode: paste multiple stories with tags:
                 {/* Reference Script */}
                 <div>
                   <label className="label">음성 스크립트 (Reference Text)</label>
-                  <textarea className="input-field min-h-[80px] resize-y text-sm leading-relaxed"
+                  <textarea className="input-field min-h-[80px] resize-y text-base leading-relaxed"
                     placeholder="녹음/업로드한 음성에서 말하는 내용을 정확히 입력하세요. 음성 복제 품질이 크게 향상됩니다."
                     value={vcRefText} onChange={(e) => setVcRefText(e.target.value)}
                     disabled={vcMode === "uploading" || vcMode === "done"} />
-                  <p className="mt-1 text-xs text-[#6b6580]">
+                  <p className="mt-1 text-sm text-gray-400">
                     {vcRefText.trim() ? `${vcRefText.trim().length}자` : "스크립트 없이도 음성 복제가 가능하지만, 입력하면 품질이 훨씬 좋��집니다."}
                   </p>
                 </div>
@@ -4047,14 +4080,14 @@ Batch mode: paste multiple stories with tags:
 
             {/* Registered voices list */}
             {voices.filter((v) => v.source === "uploaded").length > 0 && (
-              <div className="mt-6 border-t border-[#2e2845] pt-4">
-                <h3 className="mb-3 text-sm font-medium text-[#a09bb5]">등록된 음성 ({voices.filter((v) => v.source === "uploaded").length})</h3>
+              <div className="mt-6 border-t border-[#364153] pt-4">
+                <h3 className="mb-3 text-sm font-medium text-gray-300">등록된 음성 ({voices.filter((v) => v.source === "uploaded").length})</h3>
                 <div className="space-y-1.5 max-h-[200px] overflow-y-auto pr-1">
                   {voices.filter((v) => v.source === "uploaded").map((v) => (
-                    <div key={v.id} className="flex items-center justify-between rounded-lg bg-[#1e1a2e] px-3 py-2 text-sm">
+                    <div key={v.id} className="flex items-center justify-between rounded-lg bg-[#1e2939] px-3 py-2 text-sm">
                       <div>
                         <span className="font-medium text-white">{v.name}</span>
-                        <span className="ml-2 text-xs text-[#6b6580]">{v.language}</span>
+                        <span className="ml-2 text-sm text-gray-400">{v.language}</span>
                       </div>
                       <div className="flex items-center gap-2">
                         {v.ref_text && <span className="text-[10px] text-accent-400/70">스크립트 있음</span>}
@@ -4069,7 +4102,7 @@ Batch mode: paste multiple stories with tags:
         </div>
       )}
 
-      <footer className="mt-12 border-t border-[#2e2845] pt-6 text-center text-xs text-[#6b6580] space-y-1">
+      <footer className="mt-12 border-t border-[#364153] pt-6 text-center text-sm text-gray-400 space-y-1">
         <p>오픈소스 오디오 자서전, 시낭독 영상 제작 소프트웨어</p>
         <p>2026년 5월, Sonny. 소스코드 : <a href="https://github.com/muntakson/voicestudio" target="_blank" rel="noopener noreferrer" className="underline hover:text-[#a78bfa]">github.com/muntakson/voicestudio</a></p>
         <p>제작목적 : AI 코딩 교육 &middot; mtshon@gmail.com</p>
@@ -4081,22 +4114,22 @@ Batch mode: paste multiple stories with tags:
           <div className="card mx-4 w-full max-w-sm space-y-3" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between">
               <h2 className="text-lg font-semibold">시 모음 선택</h2>
-              <button className="p-1 rounded hover:bg-[#2a2540] text-[#a09bb5]" onClick={() => setShowPoemPicker(false)}><CloseIcon /></button>
+              <button className="p-1 rounded hover:bg-[#1e2939] text-gray-300" onClick={() => setShowPoemPicker(false)}><CloseIcon /></button>
             </div>
             {poemFiles.length === 0 ? (
-              <p className="text-sm text-[#6b6580] py-4 text-center">파일이 없습니다</p>
+              <p className="text-sm text-gray-400 py-4 text-center">파일이 없습니다</p>
             ) : (
               <div className="space-y-1.5 max-h-[400px] overflow-y-auto pr-1">
                 {poemFiles.map((p) => (
                   <button key={p.filename} disabled={poemLoading}
-                    className="w-full rounded-lg px-4 py-3 text-left text-sm transition-colors bg-[#1e1a2e] border border-transparent hover:bg-[#2a2540] hover:border-accent-500/30 text-[#c0bcd0]"
+                    className="w-full rounded-lg px-4 py-3 text-left text-sm transition-colors bg-[#1e2939] border border-transparent hover:bg-[#1e2939] hover:border-accent-500/30 text-[#d1d5dc]"
                     onClick={() => loadPoemFile(p.filename)}>
                     <span className="font-medium text-white">{p.name}</span>
                   </button>
                 ))}
               </div>
             )}
-            {poemLoading && <div className="flex items-center justify-center gap-2 py-2"><Spinner small /><span className="text-sm text-[#a09bb5]">불러오는 중...</span></div>}
+            {poemLoading && <div className="flex items-center justify-center gap-2 py-2"><Spinner small /><span className="text-sm text-gray-300">불러오는 중...</span></div>}
           </div>
         </div>
       )}
@@ -4106,7 +4139,7 @@ Batch mode: paste multiple stories with tags:
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
           <div className="card mx-4 w-full max-w-md space-y-4">
             <h2 className="text-lg font-semibold">Register Voice</h2>
-            <div className="rounded-lg bg-[#1e1a2e] px-3 py-2 text-sm text-[#a09bb5]">File: {uploadFile?.name}</div>
+            <div className="rounded-lg bg-[#1e2939] px-3 py-2 text-sm text-gray-300">File: {uploadFile?.name}</div>
             <div><label className="label">Speaker Name *</label><input type="text" className="input-field" placeholder="e.g. John, Narrator" value={uploadName} onChange={(e) => setUploadName(e.target.value)} autoFocus /></div>
             <div><label className="label">Reference Transcript (optional)</label><textarea className="input-field min-h-[80px] resize-y text-sm" placeholder="Type what is spoken in the audio..." value={uploadRefText} onChange={(e) => setUploadRefText(e.target.value)} /></div>
             <div><label className="label">Language</label><select className="input-field cursor-pointer" value={uploadLanguage} onChange={(e) => setUploadLanguage(e.target.value)}>{LANGUAGES.map((l) => <option key={l} value={l}>{l}</option>)}</select></div>
@@ -4124,20 +4157,20 @@ Batch mode: paste multiple stories with tags:
           <div className="card mx-4 w-full max-w-lg space-y-4">
             <div className="flex items-center justify-between">
               <h2 className="text-lg font-semibold">저장된 음성 파일</h2>
-              <button className="text-[#6b6580] hover:text-white" onClick={() => setShowAudioList(false)}><CloseIcon /></button>
+              <button className="text-gray-400 hover:text-white" onClick={() => setShowAudioList(false)}><CloseIcon /></button>
             </div>
             {audioFiles.length === 0 ? (
-              <p className="text-sm text-[#6b6580] py-4 text-center">저장된 음성 파일이 없습니다</p>
+              <p className="text-sm text-gray-400 py-4 text-center">저장된 음성 파일이 없습니다</p>
             ) : (
               <div className="max-h-[400px] overflow-y-auto space-y-1.5">
                 {audioFiles.map((af) => (
                   <button key={af.filename} onClick={() => selectExistingAudio(af.filename)}
-                    className="w-full rounded-lg bg-[#1e1a2e] border border-transparent hover:bg-[#2a2540] hover:border-accent-500/30 px-4 py-3 text-left transition-colors">
+                    className="w-full rounded-lg bg-[#1e2939] border border-transparent hover:bg-[#1e2939] hover:border-accent-500/30 px-4 py-3 text-left transition-colors">
                     <div className="flex items-center justify-between">
-                      <span className="text-sm text-[#e8e4f0] truncate">{af.filename}</span>
-                      <span className="text-xs text-[#6b6580] ml-2 shrink-0">{fmtSize(af.size)}</span>
+                      <span className="text-sm text-white truncate">{af.filename}</span>
+                      <span className="text-sm text-gray-400 ml-2 shrink-0">{fmtSize(af.size)}</span>
                     </div>
-                    <p className="text-[10px] text-[#6b6580] mt-0.5">{fmtDate(af.modified || af.created_at || "")}</p>
+                    <p className="text-[10px] text-gray-400 mt-0.5">{fmtDate(af.modified || af.created_at || "")}</p>
                   </button>
                 ))}
               </div>
@@ -4152,19 +4185,19 @@ Batch mode: paste multiple stories with tags:
           <div className="card w-full max-w-3xl max-h-[90vh] overflow-y-auto space-y-4">
             <div className="flex items-center justify-between">
               <h2 className="text-lg font-semibold">음성 클립 추출</h2>
-              <button className="text-[#6b6580] hover:text-white" onClick={closeClipModal}><CloseIcon /></button>
+              <button className="text-gray-400 hover:text-white" onClick={closeClipModal}><CloseIcon /></button>
             </div>
             <div className="flex items-center gap-2">
-              <span className="text-sm text-[#a09bb5] truncate flex-1">{clipModal.filename}</span>
-              {clipDuration > 0 && <span className="text-xs text-[#6b6580] shrink-0">{fmtAudTime(clipDuration)}</span>}
+              <span className="text-sm text-gray-300 truncate flex-1">{clipModal.filename}</span>
+              {clipDuration > 0 && <span className="text-sm text-gray-400 shrink-0">{fmtAudTime(clipDuration)}</span>}
             </div>
 
             {/* Clip history */}
             {clipHistory.length > 0 && (
-              <div className="rounded-lg bg-[#0d0b14] border border-[#2e2845] px-3 py-2 space-y-1">
-                <p className="text-[10px] text-[#6b6580] font-medium">편집 이력</p>
+              <div className="rounded-lg bg-[#101828] border border-[#364153] px-3 py-2 space-y-1">
+                <p className="text-[10px] text-gray-400 font-medium">편집 이력</p>
                 {clipHistory.map((h, i) => (
-                  <p key={i} className="text-[11px] text-[#8a84a0] font-mono">
+                  <p key={i} className="text-sm text-gray-400 font-mono">
                     {i + 1}. {h.from} → <span className="text-accent-400">{h.to}</span> ({fmtAudTime(h.start)}~{fmtAudTime(h.end)})
                   </p>
                 ))}
@@ -4173,20 +4206,20 @@ Batch mode: paste multiple stories with tags:
 
             {!clipReady ? (
               <div className="flex items-center gap-3 py-8 justify-center">
-                <Spinner /> <span className="text-sm text-[#a09bb5]">파형 로딩 중...</span>
+                <Spinner /> <span className="text-sm text-gray-300">파형 로딩 중...</span>
               </div>
             ) : (
               <>
                 {/* Waveform */}
                 {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions */}
-                <div className="relative rounded-lg border border-[#2e2845] overflow-hidden cursor-crosshair"
+                <div className="relative rounded-lg border border-[#364153] overflow-hidden cursor-crosshair"
                   onMouseDown={onClipMouseDown}>
                   <canvas ref={clipCanvasRef} width={900} height={140} className="w-full h-36 block" />
                 </div>
 
                 {/* Time display */}
                 <div className="flex items-center justify-between text-xs">
-                  <span className="font-mono text-[#c0bcd0] tabular-nums">
+                  <span className="font-mono text-[#d1d5dc] tabular-nums">
                     {fmtAudTime(clipTime)} / {fmtAudTime(clipDuration)}
                   </span>
                   {clipSelection && Math.abs(clipSelection[1] - clipSelection[0]) >= 0.3 && (
@@ -4218,12 +4251,12 @@ Batch mode: paste multiple stories with tags:
                 {/* Debug Console */}
                 <div className="mt-1">
                   <div className="mb-1 flex items-center justify-between">
-                    <span className="text-[11px] font-medium text-[#6b6580]">Debug Console</span>
-                    <button className="text-[10px] text-[#6b6580] hover:text-white" onClick={() => setClipLogs([])}>Clear</button>
+                    <span className="text-xs font-medium text-gray-400">Debug Console</span>
+                    <button className="text-[10px] text-gray-400 hover:text-white" onClick={() => setClipLogs([])}>Clear</button>
                   </div>
-                  <div ref={clipLogRef} className="h-28 overflow-y-auto rounded-lg bg-[#0d0b14] border border-[#2e2845] px-3 py-2 font-mono text-[11px] text-[#8a84a0] space-y-0.5">
+                  <div ref={clipLogRef} className="h-28 overflow-y-auto rounded-lg bg-[#101828] border border-[#364153] px-3 py-2 font-mono text-sm text-gray-400 space-y-0.5">
                     {clipLogs.length === 0 ? (
-                      <p className="text-[#4a4560]">작업 로그가 여기에 표시됩니다...</p>
+                      <p className="text-[#4a5565]">작업 로그가 여기에 표시됩니다...</p>
                     ) : clipLogs.map((log, i) => (
                       <p key={i} className={log.includes("오류") || log.includes("실패") ? "text-red-400" : log.includes("완료") || log.includes("등록 완료") ? "text-green-400" : log.includes("넣으세요") || log.includes("선택하세요") || log.includes("짧습니다") ? "text-amber-400" : ""}>{log}</p>
                     ))}
@@ -4231,12 +4264,12 @@ Batch mode: paste multiple stories with tags:
                 </div>
 
                 {/* Step 1: Crop & Save */}
-                <div className="border-t border-[#2e2845] pt-4 space-y-3">
+                <div className="border-t border-[#364153] pt-4 space-y-3">
                   <div className="flex items-center gap-2">
                     <span className="flex h-6 w-6 items-center justify-center rounded-full bg-accent-600 text-xs font-bold text-white">1</span>
-                    <h3 className="text-sm font-semibold text-[#e8e4f0]">구간 선택 &amp; 저장</h3>
+                    <h3 className="text-sm font-semibold text-white">구간 선택 &amp; 저장</h3>
                   </div>
-                  <p className="text-xs text-[#6b6580]">파형에서 원하는 구간을 드래그로 선택하고, 파일명을 입력한 후 저장하세요. 저장 후 잘린 파일이 다시 로드되어 반복 편집할 수 있습니다.</p>
+                  <p className="text-sm text-gray-400">파형에서 원하는 구간을 드래그로 선택하고, 파일명을 입력한 후 저장하세요. 저장 후 잘린 파일이 다시 로드되어 반복 편집할 수 있습니다.</p>
                   <div className="flex items-center gap-3">
                     <input type="text" className="input-field flex-1" placeholder="저장할 파일명 (예: 아버지_목소리_01)"
                       value={clipCropName} onChange={(e) => setClipCropName(e.target.value)}
@@ -4250,12 +4283,12 @@ Batch mode: paste multiple stories with tags:
                 </div>
 
                 {/* Step 2: Register Voice */}
-                <div className="border-t border-[#2e2845] pt-4 space-y-3">
+                <div className="border-t border-[#364153] pt-4 space-y-3">
                   <div className="flex items-center gap-2">
                     <span className="flex h-6 w-6 items-center justify-center rounded-full bg-emerald-600 text-xs font-bold text-white">2</span>
-                    <h3 className="text-sm font-semibold text-[#e8e4f0]">음성 등록 (Qwen3-TTS)</h3>
+                    <h3 className="text-sm font-semibold text-white">음성 등록 (Qwen3-TTS)</h3>
                   </div>
-                  <p className="text-xs text-[#6b6580]">현재 로드된 오디오가 원하는 음성 클립이면, 화자 이름을 입력하고 등록하세요. 등록된 음성은 오디오북생성 탭에서 사용할 수 있습니다.</p>
+                  <p className="text-sm text-gray-400">현재 로드된 오디오가 원하는 음성 클립이면, 화자 이름을 입력하고 등록하세요. 등록된 음성은 오디오북생성 탭에서 사용할 수 있습니다.</p>
                   <div className="grid gap-3 sm:grid-cols-2">
                     <div>
                       <label className="label">화자 이름 *</label>
@@ -4274,7 +4307,7 @@ Batch mode: paste multiple stories with tags:
                       {clipRegistering ? <><Spinner small /> 등록 중...</> : <><UploadIcon /> 음성 등록</>}
                     </button>
                     {clipSaveMsg && (
-                      <span className={`text-xs ${clipSaveMsg.includes("실패") || clipSaveMsg.includes("오류") ? "text-red-400" : clipSaveMsg.includes("완료") ? "text-green-400" : "text-[#a09bb5]"}`}>
+                      <span className={`text-xs ${clipSaveMsg.includes("실패") || clipSaveMsg.includes("오류") ? "text-red-400" : clipSaveMsg.includes("완료") ? "text-green-400" : "text-gray-300"}`}>
                         {clipSaveMsg}
                       </span>
                     )}
@@ -4331,19 +4364,19 @@ function AudioPlayer({ src }: { src: string }) {
   const pct = dur > 0 ? (cur / dur) * 100 : 0;
 
   return (
-    <div className="flex items-center gap-3 rounded-xl bg-[#1a1630] border border-[#3d3556] px-4 py-3">
+    <div className="flex items-center gap-3 rounded-xl bg-[#101828] border border-[#364153] px-4 py-3">
       <button onClick={toggle} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-accent-500 text-white hover:bg-accent-400 transition-colors">
         {playing
           ? <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 20 20"><rect x="5" y="3" width="4" height="14" rx="1" /><rect x="11" y="3" width="4" height="14" rx="1" /></svg>
           : <svg className="h-4 w-4 ml-0.5" fill="currentColor" viewBox="0 0 20 20"><path d="M6.3 2.841A1.5 1.5 0 004 4.11v11.78a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z" /></svg>}
       </button>
-      <span className="w-11 shrink-0 text-xs font-mono text-[#ddd8ee]">{fmt(cur)}</span>
+      <span className="w-11 shrink-0 text-xs font-mono text-[#e5e7eb]">{fmt(cur)}</span>
       <div className="relative flex-1 cursor-pointer py-1" onClick={seek}>
-        <div className="h-2 rounded-full bg-[#3d3556]">
+        <div className="h-2 rounded-full bg-[#364153]">
           <div className="h-full rounded-full bg-accent-400 transition-[width] duration-100" style={{ width: `${pct}%` }} />
         </div>
       </div>
-      <span className="w-11 shrink-0 text-xs font-mono text-[#b8b0cc]">{fmt(dur)}</span>
+      <span className="w-11 shrink-0 text-xs font-mono text-gray-300">{fmt(dur)}</span>
       <audio ref={ref} src={src} preload="metadata" />
     </div>
   );
@@ -4366,7 +4399,7 @@ function SpellCheckIcon() { return <svg className="h-5 w-5" fill="none" stroke="
 function RefreshIcon() { return <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>; }
 function PlusIcon() { return <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" /></svg>; }
 function BackIcon() { return <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" /></svg>; }
-function BookIcon() { return <svg className="mx-auto h-12 w-12 text-[#6b6580]" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25" /></svg>; }
+function BookIcon() { return <svg className="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25" /></svg>; }
 function ListIcon() { return <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" /><circle cx="2" cy="6" r="1" fill="currentColor" /><circle cx="2" cy="12" r="1" fill="currentColor" /><circle cx="2" cy="18" r="1" fill="currentColor" /></svg>; }
 function CloseIcon() { return <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>; }
 function ChevronIcon({ open }: { open: boolean }) { return <svg className={`h-3.5 w-3.5 transition-transform ${open ? "rotate-90" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>; }

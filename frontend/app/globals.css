@@ -3,55 +3,58 @@
 @tailwind utilities;
 
 :root {
-  --bg-primary: #0f0d1a;
-  --bg-secondary: #1a1726;
-  --bg-tertiary: #241f33;
-  --border-color: #2e2845;
-  --text-primary: #e8e4f0;
-  --text-secondary: #a09bb5;
+  --bg-primary: #101828;
+  --bg-secondary: #1e2939;
+  --bg-tertiary: #364153;
+  --border-color: #364153;
+  --text-primary: #ffffff;
+  --text-secondary: #d1d5dc;
 }
 
 body {
   background-color: var(--bg-primary);
   color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+  font-size: 14px;
+  line-height: 1.5;
 }
 
 @layer base {
   * {
     scrollbar-width: thin;
-    scrollbar-color: #4338ca #1a1726;
+    scrollbar-color: #3080ff #101828;
   }
 }
 
 @layer components {
   .card {
-    @apply rounded-xl border border-[#3d3556] bg-[#252040] p-5 shadow-lg;
+    @apply rounded-xl border border-gray-700 bg-gray-800 p-5 shadow-lg;
   }
 
   .input-field {
-    @apply w-full rounded-lg border border-[#2e2845] bg-[#241f33] px-4 py-2.5
-           text-[#e8e4f0] placeholder-[#6b6580]
-           focus:border-accent-500 focus:outline-none focus:ring-1 focus:ring-accent-500
+    @apply w-full rounded-lg border border-gray-600 bg-gray-700 px-4 py-2.5
+           text-white placeholder-gray-400
+           focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500
            transition-colors;
   }
 
   .btn-primary {
     @apply inline-flex items-center justify-center gap-2 rounded-lg
-           bg-accent-600 px-6 py-3 font-semibold text-white
-           hover:bg-accent-500 active:bg-accent-700
-           disabled:opacity-50 disabled:cursor-not-allowed
+           bg-blue-600 px-5 py-2.5 font-medium text-white
+           hover:bg-blue-700 active:bg-blue-800
+           disabled:bg-blue-600/50 disabled:cursor-not-allowed
            transition-colors;
   }
 
   .btn-secondary {
     @apply inline-flex items-center justify-center gap-2 rounded-lg
-           border border-[#2e2845] bg-[#241f33] px-4 py-2 text-sm text-[#a09bb5]
-           hover:bg-[#2e2845] hover:text-[#e8e4f0]
+           border border-gray-600 bg-gray-700 px-4 py-2 text-sm text-gray-300
+           hover:bg-gray-600 hover:text-white
            transition-colors;
   }
 
   .label {
-    @apply block text-sm font-medium text-[#a09bb5] mb-1.5;
+    @apply block text-sm font-medium text-gray-400 mb-1.5;
   }
 }
 
@@ -67,5 +70,5 @@ body {
 
 /* Audio player styling */
 audio::-webkit-media-controls-panel {
-  background-color: #241f33;
+  background-color: #364153;
 }
