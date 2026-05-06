@@ -1,17 +1,22 @@
 """Simple JWT-based authentication and daily quota."""
 
-import hashlib
+import logging
 import os
 import time
 from datetime import date
 from typing import Optional
 
+import bcrypt
 import jwt
 from fastapi import Header, HTTPException
 
 from app.database import get_db
 
-SECRET_KEY = os.environ.get("AUTH_SECRET", "voicestudio-secret-key-2026")
+logger = logging.getLogger(__name__)
+
+SECRET_KEY = os.environ.get("AUTH_SECRET", "")
+if not SECRET_KEY:
+    raise RuntimeError("AUTH_SECRET environment variable is required. Set it in start.sh or systemd unit.")
 ALGORITHM = "HS256"
 TOKEN_EXPIRE = 60 * 60 * 24 * 30  # 30 days
 
@@ -20,7 +25,26 @@ KRW_PER_USD = 1380
 
 
 def _hash_pw(password: str) -> str:
-    return hashlib.sha256(password.encode()).hexdigest()
+    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+
+
+def _check_pw(password: str, hashed: str) -> bool:
+    if hashed.startswith("$2b$") or hashed.startswith("$2a$"):
+        return bcrypt.checkpw(password.encode(), hashed.encode())
+    # Legacy SHA-256 hash — verify then upgrade
+    import hashlib
+    return hashlib.sha256(password.encode()).hexdigest() == hashed
+
+
+def _maybe_upgrade_hash(username: str, password: str, current_hash: str):
+    """Upgrade legacy SHA-256 hashes to bcrypt on successful login."""
+    if current_hash.startswith("$2b$") or current_hash.startswith("$2a$"):
+        return
+    new_hash = _hash_pw(password)
+    db = get_db()
+    db.execute("UPDATE users SET password_hash = ? WHERE username = ?", (new_hash, username))
+    db.commit()
+    logger.info("Upgraded password hash for user '%s' to bcrypt", username)
 
 
 def init_users():
@@ -49,17 +73,21 @@ def init_users():
         CREATE INDEX IF NOT EXISTS idx_usage_user_date ON daily_usage(username, usage_date)
     """)
     db.commit()
+
+    admin_pw = os.environ.get("ADMIN_PASSWORD", "")
+    default_user_pw = os.environ.get("DEFAULT_USER_PASSWORD", "")
+
     existing = db.execute("SELECT username FROM users").fetchall()
     names = {r["username"] for r in existing}
-    if "admin" not in names:
+    if "admin" not in names and admin_pw:
         db.execute(
             "INSERT INTO users (username, password_hash, role, created_at) VALUES (?, ?, ?, datetime('now'))",
-            ("admin", _hash_pw("intel8051"), "admin"),
+            ("admin", _hash_pw(admin_pw), "admin"),
         )
-    if "sonny" not in names:
+    if "sonny" not in names and default_user_pw:
         db.execute(
             "INSERT INTO users (username, password_hash, role, created_at) VALUES (?, ?, ?, datetime('now'))",
-            ("sonny", _hash_pw("q1"), "user"),
+            ("sonny", _hash_pw(default_user_pw), "user"),
         )
     db.commit()
 
@@ -82,8 +110,9 @@ def signup(username: str, password: str) -> dict:
 def signin(username: str, password: str) -> dict:
     db = get_db()
     row = db.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
-    if not row or row["password_hash"] != _hash_pw(password):
+    if not row or not _check_pw(password, row["password_hash"]):
         raise HTTPException(status_code=401, detail="Invalid username or password")
+    _maybe_upgrade_hash(username, password, row["password_hash"])
     token = _create_token(row["username"], row["role"])
     remaining = get_remaining_quota(row["username"]) if row["role"] != "admin" else -1
     return {"username": row["username"], "role": row["role"], "token": token, "quota_remaining_krw": remaining}
