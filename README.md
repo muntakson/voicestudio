@@ -288,14 +288,6 @@ Issues and pull requests are welcome. This project was built for AI coding educa
 
 ---
 
-## 연락처 | Contact
-
-- **제작자**: Muntak Son
-- **이메일**: mtshon@gmail.com
-- **GitHub**: [github.com/muntakson/voicestudio](https://github.com/muntakson/voicestudio)
-
----
-
 ## 라이선스 | License
 
 [GNU General Public License v3.0](LICENSE)
