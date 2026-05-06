@@ -285,4 +285,4 @@ Issues and pull requests are welcome. This project was built for AI coding educa
 
 ## 라이선스 | License
 
-MIT
+[GNU General Public License v3.0](LICENSE)
