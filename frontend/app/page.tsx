@@ -23,6 +23,10 @@ interface Project {
   rewrite_model: string | null; rewrite_input_tokens: number; rewrite_output_tokens: number; rewrite_elapsed: number; rewrite_cost: number;
   tts_text: string | null; tts_engine: string | null; tts_model: string | null; tts_text_chars: number; tts_elapsed: number; tts_cost: number;
   total_cost: number;
+  poem_text: string | null; poem_audio_filename: string | null; poem_audio_duration: number;
+  poem_image_prompt: string | null; poem_image_filename: string | null;
+  poem_video_prompt: string | null; poem_video_filename: string | null; poem_gen_elapsed: number;
+  poem_gen_summary: string | null;
 }
 
 interface AudioFileInfo { filename: string; size: number; modified?: string; original_name?: string; file_type?: string; created_at?: string; }
@@ -304,7 +308,7 @@ export default function Home() {
   const [expandedSummary, setExpandedSummary] = useState<Set<string>>(new Set());
 
   /* ---- Studio state ---- */
-  const [activeTab, setActiveTab] = useState<"recorder" | "download" | "source" | "tts" | "infographic" | "asr" | "editor" | "settings">("asr");
+  const [activeTab, setActiveTab] = useState<"recorder" | "download" | "source" | "tts" | "infographic" | "poem-shorts" | "asr" | "editor" | "settings">("asr");
 
   /* TTS */
   const [ttsEngine, setTtsEngine] = useState<"elevenlabs" | "qwen3">("qwen3");
@@ -468,6 +472,23 @@ export default function Home() {
   const [infoImageUrl, setInfoImageUrl] = useState<string | null>(null);
   const infoAbortRef = useRef<AbortController | null>(null);
 
+  /* Poem Shorts */
+  const [psPoem, setPsPoem] = useState("");
+  const [psAudioUrl, setPsAudioUrl] = useState<string | null>(null);
+  const [psAudioDuration, setPsAudioDuration] = useState<number | null>(null);
+  const [psAudioStatus, setPsAudioStatus] = useState<{ status: string; message: string }>({ status: "idle", message: "" });
+  const [psImagePrompt, setPsImagePrompt] = useState("");
+  const [psImagePromptStatus, setPsImagePromptStatus] = useState<{ status: string; message: string }>({ status: "idle", message: "" });
+  const [psImageUrl, setPsImageUrl] = useState<string | null>(null);
+  const [psImageStatus, setPsImageStatus] = useState<{ status: string; message: string }>({ status: "idle", message: "" });
+  const [psVideoPrompt, setPsVideoPrompt] = useState("");
+  const [psVideoPromptStatus, setPsVideoPromptStatus] = useState<{ status: string; message: string }>({ status: "idle", message: "" });
+  const [psVideoUrl, setPsVideoUrl] = useState<string | null>(null);
+  const [psVideoStatus, setPsVideoStatus] = useState<{ status: string; message: string }>({ status: "idle", message: "" });
+  const psAbortRef = useRef<AbortController | null>(null);
+  const psPoemSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [psSummaryOpen, setPsSummaryOpen] = useState(false);
+
   /* Settings */
   const [selectedModel, setSelectedModel] = useState("claude-sonnet-4-6");
 
@@ -542,6 +563,13 @@ export default function Home() {
     setDlAudReady(false); setDlAudDuration(0); setDlAudPlaying(false); setDlAudTime(0);
     setDlAudSelection(null); dlAudSelRef.current = null; setDlAudSaving(false); setDlAudSaveMsg("");
     dlAudPeaksRef.current = [];
+    // Poem Shorts
+    setPsPoem(""); setPsAudioUrl(null); setPsAudioDuration(null);
+    setPsAudioStatus({ status: "idle", message: "" });
+    setPsImagePrompt(""); setPsImagePromptStatus({ status: "idle", message: "" });
+    setPsImageUrl(null); setPsImageStatus({ status: "idle", message: "" });
+    setPsVideoPrompt(""); setPsVideoPromptStatus({ status: "idle", message: "" });
+    setPsVideoUrl(null); setPsVideoStatus({ status: "idle", message: "" });
   };
 
   const openProject = async (id: string) => {
@@ -581,6 +609,13 @@ export default function Home() {
       if (proj.generated_audio_filename) {
         setGen({ status: "complete", message: "Done!", audioUrl: `/api/outputs/${proj.generated_audio_filename}`, duration: null });
       }
+      // Poem Shorts
+      if (proj.poem_text) setPsPoem(proj.poem_text);
+      if (proj.poem_audio_filename) { setPsAudioUrl(`/api/outputs/${proj.poem_audio_filename}`); setPsAudioDuration(proj.poem_audio_duration || null); }
+      if (proj.poem_image_prompt) setPsImagePrompt(proj.poem_image_prompt);
+      if (proj.poem_image_filename) setPsImageUrl(`/api/infographics/${proj.poem_image_filename}`);
+      if (proj.poem_video_prompt) setPsVideoPrompt(proj.poem_video_prompt);
+      if (proj.poem_video_filename) setPsVideoUrl(`/api/videos/${proj.poem_video_filename}`);
       setActiveTab(proj.transcript_json ? "editor" : "asr");
     } catch { /* silent */ }
     setView("studio");
@@ -640,6 +675,146 @@ export default function Home() {
     }, 1500);
     return () => { if (ttsSaveTimer.current) clearTimeout(ttsSaveTimer.current); };
   }, [text, currentProjectId]);
+
+  // Auto-save poem text to project with 1.5s debounce
+  useEffect(() => {
+    if (!currentProjectId || !psPoem) return;
+    if (psPoemSaveTimer.current) clearTimeout(psPoemSaveTimer.current);
+    psPoemSaveTimer.current = setTimeout(async () => {
+      await patchProject({ poem_text: psPoem });
+    }, 1500);
+    return () => { if (psPoemSaveTimer.current) clearTimeout(psPoemSaveTimer.current); };
+  }, [psPoem, currentProjectId]);
+
+  /* ---- Poem Shorts handlers ---- */
+  const handlePsGenerateAudio = async () => {
+    if (!psPoem.trim()) return;
+    psAbortRef.current?.abort();
+    const controller = new AbortController();
+    psAbortRef.current = controller;
+    setPsAudioStatus({ status: "generating", message: "Qwen3-TTS로 시 낭독 생성 중..." });
+    setPsAudioUrl(null); setPsAudioDuration(null);
+    try {
+      const res = await fetch("/api/poem-shorts/generate-audio", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ poem_text: psPoem, project_id: currentProjectId || "", voice_id: "upload-68582e2a-성우" }),
+        signal: controller.signal,
+      });
+      if (!res.ok) { setPsAudioStatus({ status: "error", message: await res.text() }); return; }
+      await readSSE(res, (evt) => {
+        if (evt.status === "complete") {
+          setPsAudioStatus({ status: "complete", message: `생성 완료 (${evt.generation_time}초, ${(evt.duration as number)?.toFixed(1)}초 오디오)` });
+          setPsAudioUrl(evt.audio_url as string);
+          setPsAudioDuration(evt.duration as number);
+        } else if (evt.status === "error") {
+          setPsAudioStatus({ status: "error", message: evt.message as string });
+        } else if (evt.message) {
+          setPsAudioStatus({ status: "generating", message: evt.message as string });
+        }
+      });
+    } catch (err) {
+      if ((err as Error).name !== "AbortError")
+        setPsAudioStatus({ status: "error", message: (err as Error).message });
+    }
+  };
+
+  const handlePsGenerateImagePrompt = async () => {
+    if (!psPoem.trim()) return;
+    setPsImagePromptStatus({ status: "generating", message: "이미지 프롬프트 생성 중..." });
+    try {
+      const res = await fetch("/api/poem-shorts/generate-image-prompt", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ poem_text: psPoem, project_id: currentProjectId || "", model: selectedModel }),
+      });
+      if (!res.ok) { setPsImagePromptStatus({ status: "error", message: await res.text() }); return; }
+      await readSSE(res, (evt) => {
+        if (evt.status === "complete") {
+          setPsImagePrompt(evt.prompt as string);
+          setPsImagePromptStatus({ status: "complete", message: `완료 (${evt.elapsed}초)` });
+        } else if (evt.status === "error") {
+          setPsImagePromptStatus({ status: "error", message: evt.message as string });
+        } else if (evt.message) {
+          setPsImagePromptStatus({ status: "generating", message: evt.message as string });
+        }
+      });
+    } catch (err) {
+      setPsImagePromptStatus({ status: "error", message: (err as Error).message });
+    }
+  };
+
+  const handlePsGenerateImage = async () => {
+    if (!psImagePrompt.trim()) return;
+    setPsImageStatus({ status: "generating", message: "Gemini 2.5 Flash로 배경 이미지 생성 중..." });
+    setPsImageUrl(null);
+    try {
+      const res = await fetch("/api/poem-shorts/generate-image", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: psImagePrompt, project_id: currentProjectId || "" }),
+      });
+      if (!res.ok) { setPsImageStatus({ status: "error", message: await res.text() }); return; }
+      await readSSE(res, (evt) => {
+        if (evt.status === "complete") {
+          setPsImageUrl(evt.image_url as string);
+          setPsImageStatus({ status: "complete", message: `완료 (${evt.model || "unknown"}, ${evt.elapsed}초, ${((evt.size as number) / 1024).toFixed(0)}KB)` });
+        } else if (evt.status === "error") {
+          setPsImageStatus({ status: "error", message: evt.message as string });
+        } else if (evt.message) {
+          setPsImageStatus({ status: "generating", message: evt.message as string });
+        }
+      });
+    } catch (err) {
+      setPsImageStatus({ status: "error", message: (err as Error).message });
+    }
+  };
+
+  const handlePsGenerateVideoPrompt = async () => {
+    if (!psPoem.trim()) return;
+    setPsVideoPromptStatus({ status: "generating", message: "영상 프롬프트 생성 중..." });
+    try {
+      const res = await fetch("/api/poem-shorts/generate-video-prompt", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ poem_text: psPoem, image_prompt: psImagePrompt, project_id: currentProjectId || "", model: selectedModel }),
+      });
+      if (!res.ok) { setPsVideoPromptStatus({ status: "error", message: await res.text() }); return; }
+      await readSSE(res, (evt) => {
+        if (evt.status === "complete") {
+          setPsVideoPrompt(evt.prompt as string);
+          setPsVideoPromptStatus({ status: "complete", message: `완료 (${evt.elapsed}초)` });
+        } else if (evt.status === "error") {
+          setPsVideoPromptStatus({ status: "error", message: evt.message as string });
+        } else if (evt.message) {
+          setPsVideoPromptStatus({ status: "generating", message: evt.message as string });
+        }
+      });
+    } catch (err) {
+      setPsVideoPromptStatus({ status: "error", message: (err as Error).message });
+    }
+  };
+
+  const handlePsGenerateVideo = async () => {
+    if (!currentProjectId) return;
+    setPsVideoStatus({ status: "generating", message: "영상 합성 중 (ffmpeg)..." });
+    setPsVideoUrl(null);
+    try {
+      const res = await fetch("/api/poem-shorts/generate-video", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ project_id: currentProjectId }),
+      });
+      if (!res.ok) { setPsVideoStatus({ status: "error", message: await res.text() }); return; }
+      await readSSE(res, (evt) => {
+        if (evt.status === "complete") {
+          setPsVideoUrl(evt.video_url as string);
+          setPsVideoStatus({ status: "complete", message: `완료 (${evt.elapsed}초, ${((evt.file_size as number) / 1024 / 1024).toFixed(1)}MB)` });
+        } else if (evt.status === "error") {
+          setPsVideoStatus({ status: "error", message: evt.message as string });
+        } else if (evt.message) {
+          setPsVideoStatus({ status: "generating", message: evt.message as string });
+        }
+      });
+    } catch (err) {
+      setPsVideoStatus({ status: "error", message: (err as Error).message });
+    }
+  };
 
   // Load source data when switching to source tab
   useEffect(() => {
@@ -2218,7 +2393,7 @@ export default function Home() {
           </div>
         ) : (
           <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-            {projects.map((p) => (
+            {projects.filter((p) => !p.name.includes('자서전')).map((p) => (
               <div key={p.id} className="flex flex-col rounded-2xl border border-[#3d3556] bg-[#252040] p-6 shadow-xl hover:border-[#5b4f8a] transition-colors">
                 {/* Header */}
                 <div className="mb-4 flex items-start justify-between gap-3">
@@ -2396,8 +2571,10 @@ export default function Home() {
           </div>
         )}
 
-        <footer className="mt-12 border-t border-[#2e2845] pt-6 text-center text-xs text-[#6b6580]">
-          Voice Studio &mdash; Powered by Qwen3-TTS &amp; Whisper
+        <footer className="mt-12 border-t border-[#2e2845] pt-6 text-center text-xs text-[#6b6580] space-y-1">
+          <p>오픈소스 오디오 자서전, 시낭독 영상 제작 소프트웨어</p>
+          <p>2026년 5월, Sonny. 소스코드 : <a href="https://github.com/muntakson/voicestudio" target="_blank" rel="noopener noreferrer" className="underline hover:text-[#a78bfa]">github.com/muntakson/voicestudio</a></p>
+          <p>제작목적 : AI 코딩 교육 &middot; mtshon@gmail.com</p>
         </footer>
 
         {/* New Project Modal */}
@@ -2443,10 +2620,10 @@ export default function Home() {
         )}
         <p className="mt-1 text-[#a09bb5]">오디오회고록 제작 서비스 - 음성인식, 녹취록 생성, AI편집, AI 오디오북 생성</p>
         <div className="mt-6 inline-flex rounded-lg border border-[#2e2845] bg-[#1a1726] p-1">
-          {(["recorder", "download", "asr", "editor", "source", "tts", "infographic", "settings"] as const).map((tab) => (
+          {(["recorder", "download", "asr", "editor", "source", "tts", "infographic", "poem-shorts", "settings"] as const).map((tab) => (
             <button key={tab} onClick={() => setActiveTab(tab)}
               className={`rounded-md px-6 py-2 text-sm font-medium transition-colors ${activeTab === tab ? "bg-accent-600 text-white" : "text-[#a09bb5] hover:text-white"}`}>
-              {tab === "recorder" ? "음성녹음" : tab === "download" ? "오디오다운로드" : tab === "source" ? "소스" : tab === "tts" ? "오디오북생성" : tab === "infographic" ? "인포그래픽" : tab === "asr" ? "음성인식" : tab === "editor" ? "글편집" : "설정"}
+              {tab === "recorder" ? "음성녹음" : tab === "download" ? "오디오다운로드" : tab === "source" ? "소스" : tab === "tts" ? "오디오북생성" : tab === "infographic" ? "인포그래픽" : tab === "poem-shorts" ? "시 숏폼" : tab === "asr" ? "음성인식" : tab === "editor" ? "글편집" : "설정"}
             </button>
           ))}
         </div>
@@ -2720,6 +2897,171 @@ Batch mode: paste multiple stories with tags:
               {infoStatus.status === "complete" && infoStatus.message && (
                 <p className="mt-2 text-xs text-[#8a84a0]">{infoStatus.message}</p>
               )}
+            </section>
+          )}
+        </div>
+      )}
+
+      {/* ============ Poem Shorts Tab ============ */}
+      {activeTab === "poem-shorts" && (
+        <div className="mx-auto max-w-3xl space-y-6">
+          {/* Step 1: Poem Input */}
+          <section className="card">
+            <h2 className="mb-2 text-lg font-semibold">1. 시 입력</h2>
+            <p className="mb-3 text-xs text-[#8a84a0]">첫째 줄: 제목 &nbsp;|&nbsp; 둘째 줄: 작가 &nbsp;|&nbsp; 나머지: 시 본문</p>
+            <textarea className="w-full rounded-lg border border-[#2e2845] bg-[#1a1726] p-4 text-sm leading-relaxed text-white placeholder-[#5a5370] focus:border-accent-500 focus:outline-none resize-y min-h-[220px]"
+              value={psPoem} onChange={(e) => setPsPoem(e.target.value)}
+              placeholder={"꽃\n김춘수\n\n내가 그의 이름을 불러주기 전에는\n그는 다만\n하나의 몸짓에 지나지 않았다.\n\n내가 그의 이름을 불러주었을 때\n그는 나에게로 와서\n꽃이 되었다."} />
+            {psPoem && <p className="mt-1 text-xs text-[#8a84a0]">{psPoem.length}자 · {psPoem.split("\n").filter(l => l.trim()).length}줄</p>}
+          </section>
+
+          {/* Step 2: Generate Audio */}
+          <section className="card">
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="text-lg font-semibold">2. 음성 생성 (낭독)</h2>
+              <button className="rounded-lg bg-accent-600 px-5 py-2 text-sm font-medium text-white hover:bg-accent-700 transition-colors disabled:opacity-50"
+                disabled={!psPoem.trim() || psAudioStatus.status === "generating"}
+                onClick={handlePsGenerateAudio}>
+                {psAudioStatus.status === "generating" ? "생성 중..." : "음성 생성"}
+              </button>
+            </div>
+            {psAudioStatus.status === "generating" && (
+              <div className="flex items-center gap-2 text-sm text-accent-400">
+                <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                {psAudioStatus.message}
+              </div>
+            )}
+            {psAudioStatus.status === "error" && <div className="rounded-lg bg-red-500/10 border border-red-500/30 px-4 py-3 text-sm text-red-300">{psAudioStatus.message}</div>}
+            {psAudioStatus.status === "complete" && <p className="text-xs text-green-400">{psAudioStatus.message}</p>}
+            {psAudioUrl && (
+              <div className="mt-3">
+                <audio src={psAudioUrl} controls className="w-full" />
+              </div>
+            )}
+          </section>
+
+          {/* Step 3: Image Prompt */}
+          <section className="card">
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="text-lg font-semibold">3. 이미지 프롬프트</h2>
+              <button className="rounded-lg border border-[#2e2845] bg-[#1a1726] px-5 py-2 text-sm font-medium text-[#a09bb5] hover:text-white hover:border-accent-500 transition-colors disabled:opacity-50"
+                disabled={!psPoem.trim() || psImagePromptStatus.status === "generating"}
+                onClick={handlePsGenerateImagePrompt}>
+                {psImagePromptStatus.status === "generating" ? "생성 중..." : "프롬프트 생성"}
+              </button>
+            </div>
+            {psImagePromptStatus.status === "generating" && (
+              <div className="flex items-center gap-2 text-sm text-accent-400">
+                <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                {psImagePromptStatus.message}
+              </div>
+            )}
+            {psImagePromptStatus.status === "error" && <div className="rounded-lg bg-red-500/10 border border-red-500/30 px-4 py-3 text-sm text-red-300">{psImagePromptStatus.message}</div>}
+            {psImagePromptStatus.status === "complete" && <p className="text-xs text-green-400 mb-2">{psImagePromptStatus.message}</p>}
+            <textarea className="w-full rounded-lg border border-[#2e2845] bg-[#1a1726] p-4 text-sm text-white placeholder-[#5a5370] focus:border-accent-500 focus:outline-none resize-y min-h-[100px]"
+              value={psImagePrompt} onChange={(e) => setPsImagePrompt(e.target.value)}
+              placeholder="이미지 생성 프롬프트가 여기에 표시됩니다..." />
+          </section>
+
+          {/* Step 4: Generate Image */}
+          <section className="card">
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="text-lg font-semibold">4. 배경 이미지 생성</h2>
+              <button className="rounded-lg bg-accent-600 px-5 py-2 text-sm font-medium text-white hover:bg-accent-700 transition-colors disabled:opacity-50"
+                disabled={!psImagePrompt.trim() || psImageStatus.status === "generating"}
+                onClick={handlePsGenerateImage}>
+                {psImageStatus.status === "generating" ? "생성 중..." : "이미지 생성"}
+              </button>
+            </div>
+            {psImageStatus.status === "generating" && (
+              <div className="flex items-center gap-2 text-sm text-accent-400">
+                <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                {psImageStatus.message}
+              </div>
+            )}
+            {psImageStatus.status === "error" && <div className="rounded-lg bg-red-500/10 border border-red-500/30 px-4 py-3 text-sm text-red-300">{psImageStatus.message}</div>}
+            {psImageStatus.status === "complete" && <p className="text-xs text-green-400 mb-2">{psImageStatus.message}</p>}
+            {psImageUrl && (
+              <div className="rounded-lg overflow-hidden border border-[#2e2845]">
+                <img src={psImageUrl} alt="Poem background" className="w-full h-auto max-h-[500px] object-contain bg-black" />
+              </div>
+            )}
+          </section>
+
+          {/* Step 5: Video Prompt */}
+          <section className="card">
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="text-lg font-semibold">5. 영상 프롬프트</h2>
+              <button className="rounded-lg border border-[#2e2845] bg-[#1a1726] px-5 py-2 text-sm font-medium text-[#a09bb5] hover:text-white hover:border-accent-500 transition-colors disabled:opacity-50"
+                disabled={!psPoem.trim() || psVideoPromptStatus.status === "generating"}
+                onClick={handlePsGenerateVideoPrompt}>
+                {psVideoPromptStatus.status === "generating" ? "생성 중..." : "프롬프트 생성"}
+              </button>
+            </div>
+            {psVideoPromptStatus.status === "generating" && (
+              <div className="flex items-center gap-2 text-sm text-accent-400">
+                <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                {psVideoPromptStatus.message}
+              </div>
+            )}
+            {psVideoPromptStatus.status === "error" && <div className="rounded-lg bg-red-500/10 border border-red-500/30 px-4 py-3 text-sm text-red-300">{psVideoPromptStatus.message}</div>}
+            {psVideoPromptStatus.status === "complete" && <p className="text-xs text-green-400 mb-2">{psVideoPromptStatus.message}</p>}
+            <textarea className="w-full rounded-lg border border-[#2e2845] bg-[#1a1726] p-4 text-sm text-white placeholder-[#5a5370] focus:border-accent-500 focus:outline-none resize-y min-h-[100px]"
+              value={psVideoPrompt} onChange={(e) => setPsVideoPrompt(e.target.value)}
+              placeholder="영상 구성 프롬프트가 여기에 표시됩니다..." />
+          </section>
+
+          {/* Step 6: Generate Video */}
+          <section className="card">
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="text-lg font-semibold">6. 영상 생성</h2>
+              <button className="rounded-lg bg-accent-600 px-5 py-2 text-sm font-medium text-white hover:bg-accent-700 transition-colors disabled:opacity-50"
+                disabled={!psAudioUrl || !psImageUrl || !currentProjectId || psVideoStatus.status === "generating"}
+                onClick={handlePsGenerateVideo}>
+                {psVideoStatus.status === "generating" ? "생성 중..." : "영상 생성"}
+              </button>
+            </div>
+            {!psAudioUrl && <p className="text-xs text-[#8a84a0]">음성과 배경 이미지를 먼저 생성해주세요</p>}
+            {psVideoStatus.status === "generating" && (
+              <div className="flex items-center gap-2 text-sm text-accent-400">
+                <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                {psVideoStatus.message}
+              </div>
+            )}
+            {psVideoStatus.status === "error" && <div className="rounded-lg bg-red-500/10 border border-red-500/30 px-4 py-3 text-sm text-red-300">{psVideoStatus.message}</div>}
+            {psVideoStatus.status === "complete" && <p className="text-xs text-green-400 mb-2">{psVideoStatus.message}</p>}
+            {psVideoUrl && (
+              <div className="space-y-3">
+                <div className="rounded-lg overflow-hidden border border-[#2e2845]">
+                  <video src={psVideoUrl} controls className="w-full max-h-[600px]" />
+                </div>
+                <a href={psVideoUrl} download className="inline-flex items-center gap-2 rounded-lg border border-[#2e2845] bg-[#1a1726] px-4 py-2 text-sm text-[#a09bb5] hover:text-white hover:border-accent-500 transition-colors">
+                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+                  다운로드
+                </a>
+              </div>
+            )}
+          </section>
+
+          {/* Results overview */}
+          {(psAudioUrl || psImageUrl || psVideoUrl) && (
+            <section className="card">
+              <h2 className="mb-3 text-lg font-semibold">생성 결과</h2>
+              <div className="space-y-2 text-sm">
+                <div className="flex items-center gap-2">
+                  <span className={psAudioUrl ? "text-green-400" : "text-[#5a5370]"}>{psAudioUrl ? "✓" : "○"}</span>
+                  <span className={psAudioUrl ? "text-white" : "text-[#5a5370]"}>음성 낭독</span>
+                  {psAudioDuration && <span className="text-[#8a84a0]">({psAudioDuration.toFixed(1)}초)</span>}
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className={psImageUrl ? "text-green-400" : "text-[#5a5370]"}>{psImageUrl ? "✓" : "○"}</span>
+                  <span className={psImageUrl ? "text-white" : "text-[#5a5370]"}>배경 이미지</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className={psVideoUrl ? "text-green-400" : "text-[#5a5370]"}>{psVideoUrl ? "✓" : "○"}</span>
+                  <span className={psVideoUrl ? "text-white" : "text-[#5a5370]"}>숏폼 영상</span>
+                </div>
+              </div>
             </section>
           )}
         </div>
@@ -3288,6 +3630,145 @@ Batch mode: paste multiple stories with tags:
               </p>
             )}
           </section>
+
+          {/* Short Form Artifacts */}
+          {sourceProject && (sourceProject.poem_text || sourceProject.poem_audio_filename || sourceProject.poem_image_prompt || sourceProject.poem_image_filename || sourceProject.poem_video_prompt || sourceProject.poem_video_filename) && (
+            <section className="card">
+              <h2 className="mb-4 text-lg font-semibold">🎬 시 숏폼 (Short Form)</h2>
+
+              {/* Collapsible Summary */}
+              {(() => {
+                const summary = sourceProject?.poem_gen_summary ? (() => { try { return JSON.parse(sourceProject.poem_gen_summary); } catch { return null; } })() : null;
+                if (!summary || Object.keys(summary).length === 0) return null;
+                const stepLabels: Record<string, string> = { audio: "낭독 음성", image_prompt: "이미지 프롬프트", image: "배경 이미지", video_prompt: "영상 프롬프트", video: "숏폼 영상" };
+                const totalElapsed = Object.values(summary).reduce((s: number, v: any) => s + (v?.elapsed || 0), 0);
+                return (
+                  <div className="mb-4">
+                    <button onClick={() => setPsSummaryOpen(!psSummaryOpen)}
+                      className="flex items-center gap-2 w-full rounded-lg bg-[#1e1a30] border border-accent-500/20 px-4 py-2.5 text-left hover:bg-[#2a2540] transition-colors">
+                      <span className={`text-xs transition-transform ${psSummaryOpen ? "rotate-90" : ""}`}>&#9654;</span>
+                      <span className="text-sm font-medium text-accent-300">Summary</span>
+                      <span className="text-xs text-[#6b6580] ml-auto">{Object.keys(summary).length}단계 · 총 {totalElapsed.toFixed(1)}초</span>
+                    </button>
+                    {psSummaryOpen && (
+                      <div className="mt-1 rounded-lg bg-[#161225] border border-[#2e2845] px-4 py-3 space-y-3">
+                        {(["audio", "image_prompt", "image", "video_prompt", "video"] as const).map((step) => {
+                          const d = summary[step];
+                          if (!d) return null;
+                          return (
+                            <div key={step} className="text-xs leading-relaxed">
+                              <div className="flex items-center gap-2 mb-1">
+                                <span className="font-medium text-[#e8e4f0]">{stepLabels[step]}</span>
+                                <span className="text-[#6b6580]">—</span>
+                                <span className="text-accent-400 font-mono">{d.model}</span>
+                              </div>
+                              <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-[#8a84a0] pl-2">
+                                {d.api_key && <span>API Key: <span className="font-mono text-[#a09bb5]">{d.api_key}</span></span>}
+                                {d.elapsed != null && <span>생성시간: <span className="text-[#c8c4d8]">{d.elapsed}초</span></span>}
+                                {d.size != null && <span>크기: <span className="text-[#c8c4d8]">{d.size >= 1048576 ? (d.size / 1048576).toFixed(1) + "MB" : (d.size / 1024).toFixed(0) + "KB"}</span></span>}
+                                {d.duration != null && <span>길이: <span className="text-[#c8c4d8]">{d.duration.toFixed(1)}초</span></span>}
+                                {d.input_tokens != null && <span>토큰: <span className="text-[#c8c4d8]">{d.input_tokens}→{d.output_tokens}</span></span>}
+                                {d.voice && <span>음성: <span className="text-[#c8c4d8]">{d.voice}</span></span>}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+
+              <div className="space-y-3">
+                {/* 1. Audio */}
+                <div className="rounded-lg bg-[#1e1a2e] border border-transparent px-4 py-3">
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-mono px-1.5 py-0.5 rounded bg-blue-900/40 text-blue-300">1</span>
+                      <span className="text-sm font-medium text-[#e8e4f0]">낭독 음성</span>
+                    </div>
+                    {sourceProject.poem_audio_filename ? (
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-green-400">{sourceProject.poem_audio_filename}</span>
+                        {sourceProject.poem_audio_duration > 0 && <span className="text-xs text-[#6b6580]">{fmtDuration(sourceProject.poem_audio_duration)}</span>}
+                        <a href={`/api/outputs/${sourceProject.poem_audio_filename}`} download className="text-[#6b6580] hover:text-accent-400 transition-colors" title="다운로드"><DownloadIcon /></a>
+                      </div>
+                    ) : <span className="text-xs text-[#6b6580]">미생성</span>}
+                  </div>
+                  {sourceProject.poem_audio_filename && (
+                    <audio src={`/api/outputs/${sourceProject.poem_audio_filename}`} controls className="w-full h-8 mt-2" />
+                  )}
+                </div>
+
+                {/* 2. Image Prompt */}
+                <div className="rounded-lg bg-[#1e1a2e] border border-transparent px-4 py-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-mono px-1.5 py-0.5 rounded bg-purple-900/40 text-purple-300">2</span>
+                      <span className="text-sm font-medium text-[#e8e4f0]">이미지 프롬프트</span>
+                    </div>
+                    {sourceProject.poem_image_prompt ? <span className="text-xs text-green-400">생성됨</span> : <span className="text-xs text-[#6b6580]">미생성</span>}
+                  </div>
+                  {sourceProject.poem_image_prompt && (
+                    <p className="mt-2 text-xs text-[#a09bb5] leading-relaxed whitespace-pre-wrap max-h-[120px] overflow-y-auto">{sourceProject.poem_image_prompt}</p>
+                  )}
+                </div>
+
+                {/* 3. Background Image */}
+                <div className="rounded-lg bg-[#1e1a2e] border border-transparent px-4 py-3">
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-mono px-1.5 py-0.5 rounded bg-emerald-900/40 text-emerald-300">3</span>
+                      <span className="text-sm font-medium text-[#e8e4f0]">배경 이미지</span>
+                    </div>
+                    {sourceProject.poem_image_filename ? (
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-green-400">{sourceProject.poem_image_filename}</span>
+                        <a href={`/api/infographics/${sourceProject.poem_image_filename}`} download className="text-[#6b6580] hover:text-accent-400 transition-colors" title="다운로드"><DownloadIcon /></a>
+                      </div>
+                    ) : <span className="text-xs text-[#6b6580]">미생성</span>}
+                  </div>
+                  {sourceProject.poem_image_filename && (
+                    <img src={`/api/infographics/${sourceProject.poem_image_filename}`} alt="배경" className="mt-2 rounded-lg max-h-[200px] object-contain" />
+                  )}
+                </div>
+
+                {/* 4. Video Prompt */}
+                <div className="rounded-lg bg-[#1e1a2e] border border-transparent px-4 py-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-mono px-1.5 py-0.5 rounded bg-amber-900/40 text-amber-300">4</span>
+                      <span className="text-sm font-medium text-[#e8e4f0]">영상 프롬프트</span>
+                    </div>
+                    {sourceProject.poem_video_prompt ? <span className="text-xs text-green-400">생성됨</span> : <span className="text-xs text-[#6b6580]">미생성</span>}
+                  </div>
+                  {sourceProject.poem_video_prompt && (
+                    <p className="mt-2 text-xs text-[#a09bb5] leading-relaxed whitespace-pre-wrap max-h-[120px] overflow-y-auto">{sourceProject.poem_video_prompt}</p>
+                  )}
+                </div>
+
+                {/* 5. Video */}
+                <div className="rounded-lg bg-[#1e1a2e] border border-transparent px-4 py-3">
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-mono px-1.5 py-0.5 rounded bg-red-900/40 text-red-300">5</span>
+                      <span className="text-sm font-medium text-[#e8e4f0]">숏폼 영상</span>
+                    </div>
+                    {sourceProject.poem_video_filename ? (
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-green-400">{sourceProject.poem_video_filename}</span>
+                        {sourceProject.poem_gen_elapsed > 0 && <span className="text-xs text-[#6b6580]">{sourceProject.poem_gen_elapsed}초</span>}
+                        <a href={`/api/videos/${sourceProject.poem_video_filename}`} download className="text-[#6b6580] hover:text-accent-400 transition-colors" title="다운로드"><DownloadIcon /></a>
+                      </div>
+                    ) : <span className="text-xs text-[#6b6580]">미생성</span>}
+                  </div>
+                  {sourceProject.poem_video_filename && (
+                    <video src={`/api/videos/${sourceProject.poem_video_filename}`} controls className="mt-2 rounded-lg w-full max-h-[300px]" />
+                  )}
+                </div>
+              </div>
+            </section>
+          )}
         </div>
       )}
 
@@ -3458,7 +3939,11 @@ Batch mode: paste multiple stories with tags:
         </div>
       )}
 
-      <footer className="mt-12 border-t border-[#2e2845] pt-6 text-center text-xs text-[#6b6580]">Voice Studio &mdash; Powered by ElevenLabs, Qwen3-TTS &amp; Whisper</footer>
+      <footer className="mt-12 border-t border-[#2e2845] pt-6 text-center text-xs text-[#6b6580] space-y-1">
+        <p>오픈소스 오디오 자서전, 시낭독 영상 제작 소프트웨어</p>
+        <p>2026년 5월, Sonny. 소스코드 : <a href="https://github.com/muntakson/voicestudio" target="_blank" rel="noopener noreferrer" className="underline hover:text-[#a78bfa]">github.com/muntakson/voicestudio</a></p>
+        <p>제작목적 : AI 코딩 교육 &middot; mtshon@gmail.com</p>
+      </footer>
 
       {/* ---- Poem Picker Modal ---- */}
       {showPoemPicker && (

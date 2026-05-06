@@ -83,3 +83,12 @@ class ProjectUpdate(BaseModel):
     tts_elapsed: Optional[float] = None
     tts_cost: Optional[float] = None
     total_cost: Optional[float] = None
+    poem_text: Optional[str] = None
+    poem_audio_filename: Optional[str] = None
+    poem_audio_duration: Optional[float] = None
+    poem_image_prompt: Optional[str] = None
+    poem_image_filename: Optional[str] = None
+    poem_video_prompt: Optional[str] = None
+    poem_video_filename: Optional[str] = None
+    poem_gen_elapsed: Optional[float] = None
+    poem_gen_summary: Optional[str] = None

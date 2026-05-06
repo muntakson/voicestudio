@@ -137,6 +137,15 @@ def _migrate(db: sqlite3.Connection):
         ("tts_elapsed", "REAL DEFAULT 0"),
         ("tts_cost", "REAL DEFAULT 0"),
         ("total_cost", "REAL DEFAULT 0"),
+        ("poem_text", "TEXT"),
+        ("poem_audio_filename", "TEXT"),
+        ("poem_audio_duration", "REAL DEFAULT 0"),
+        ("poem_image_prompt", "TEXT"),
+        ("poem_image_filename", "TEXT"),
+        ("poem_video_prompt", "TEXT"),
+        ("poem_video_filename", "TEXT"),
+        ("poem_gen_elapsed", "REAL DEFAULT 0"),
+        ("poem_gen_summary", "TEXT"),
     ]
     for col_name, col_def in new_cols:
         if col_name not in existing:
@@ -176,6 +185,10 @@ _ALLOWED_FIELDS = {
     "rewrite_model", "rewrite_input_tokens", "rewrite_output_tokens", "rewrite_elapsed", "rewrite_cost",
     "tts_text", "tts_engine", "tts_model", "tts_text_chars", "tts_elapsed", "tts_cost",
     "total_cost",
+    "poem_text", "poem_audio_filename", "poem_audio_duration",
+    "poem_image_prompt", "poem_image_filename",
+    "poem_video_prompt", "poem_video_filename", "poem_gen_elapsed",
+    "poem_gen_summary",
 }
 
 

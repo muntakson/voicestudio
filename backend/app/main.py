@@ -5,10 +5,12 @@ import json
 import logging
 import os
 import queue
+import re
 import shutil
 import subprocess
 import tempfile
 import time
+import urllib.parse
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -1039,6 +1041,111 @@ class InfographicRequest(fastapi.params.Depends):
     pass
 
 
+GEMINI_IMAGE_MODELS = [
+    "gemini-2.5-flash-image",
+    "gemini-3.1-flash-image-preview",
+]
+
+DASHSCOPE_IMAGE_URL = "https://dashscope-intl.aliyuncs.com/api/v1/services/aigc/image-generation/generation"
+DASHSCOPE_TASK_URL = "https://dashscope-intl.aliyuncs.com/api/v1/tasks"
+
+
+def _generate_qwen_image(prompt: str, api_key: str) -> tuple[bytes | None, str]:
+    import requests as _requests
+    model = "wan2.7-image-pro"
+    logger.info("Trying image generation with Qwen model: %s", model)
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "X-DashScope-Async": "enable",
+    }
+    resp = _requests.post(DASHSCOPE_IMAGE_URL, headers=headers, json={
+        "model": model,
+        "input": {"messages": [{"role": "user", "content": [{"text": prompt}]}]},
+        "parameters": {"size": "720*1280", "n": 1},
+    }, timeout=30)
+    if resp.status_code != 200:
+        raise RuntimeError(f"Qwen image API error ({resp.status_code}): {resp.text[:300]}")
+    task_id = resp.json().get("output", {}).get("task_id")
+    if not task_id:
+        raise RuntimeError("Qwen image API: no task_id in response")
+
+    poll_headers = {"Authorization": f"Bearer {api_key}"}
+    for _ in range(30):
+        time.sleep(5)
+        poll = _requests.get(f"{DASHSCOPE_TASK_URL}/{task_id}", headers=poll_headers, timeout=15)
+        if poll.status_code != 200:
+            continue
+        result = poll.json().get("output", {})
+        status = result.get("task_status", "")
+        if status == "SUCCEEDED":
+            choices = result.get("choices", [])
+            if choices:
+                for item in choices[0].get("message", {}).get("content", []):
+                    if item.get("type") == "image" and item.get("image"):
+                        img_resp = _requests.get(item["image"], timeout=60)
+                        if img_resp.status_code == 200:
+                            return img_resp.content, model
+            return None, model
+        if status == "FAILED":
+            raise RuntimeError(f"Qwen image generation failed: {result}")
+    raise RuntimeError("Qwen image generation timed out")
+
+
+def _blind_key(key: str) -> str:
+    if len(key) <= 8:
+        return key[:2] + "***"
+    return key[:4] + "***" + key[-4:]
+
+
+def _generate_gemini_image(prompt: str, api_key: str, preferred_model: str | None = None) -> tuple[bytes | None, str]:
+    from google import genai
+    from google.genai import types as genai_types
+
+    client = genai.Client(api_key=api_key)
+    models_to_try = list(GEMINI_IMAGE_MODELS)
+    if preferred_model:
+        if preferred_model in models_to_try:
+            models_to_try.remove(preferred_model)
+        models_to_try.insert(0, preferred_model)
+
+    last_error = None
+    for model_name in models_to_try:
+        try:
+            logger.info("Trying image generation with model: %s", model_name)
+            response = client.models.generate_content(
+                model=model_name,
+                contents=prompt,
+                config=genai_types.GenerateContentConfig(
+                    response_modalities=["IMAGE", "TEXT"],
+                ),
+            )
+            for part in response.candidates[0].content.parts:
+                if part.inline_data is not None:
+                    return part.inline_data.data, model_name
+        except Exception as exc:
+            last_error = exc
+            err_str = str(exc)
+            if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str or "400" in err_str:
+                logger.warning("Model %s failed (%s), trying next...", model_name, err_str[:100])
+                continue
+            raise
+
+    qwen_key = os.environ.get("QWEN_API_KEY", "")
+    if qwen_key:
+        try:
+            return _generate_qwen_image(prompt, qwen_key)
+        except Exception as exc:
+            logger.error("Qwen image generation also failed: %s", exc)
+            if last_error:
+                raise last_error
+            raise
+
+    if last_error:
+        raise last_error
+    return None, models_to_try[0]
+
+
 @app.post("/api/generate-infographic")
 async def generate_infographic(req: dict = fastapi.Body(...)):
     prompt = req.get("prompt", "").strip()
@@ -1047,33 +1154,22 @@ async def generate_infographic(req: dict = fastapi.Body(...)):
         raise HTTPException(status_code=400, detail="Prompt is required")
 
     api_key = os.environ.get("GOOGLE_API_KEY", "")
-    if not api_key:
-        raise HTTPException(status_code=500, detail="GOOGLE_API_KEY is not set")
+    qwen_key_info = os.environ.get("QWEN_API_KEY", "")
+    if not api_key and not qwen_key_info:
+        raise HTTPException(status_code=500, detail="No image generation API key configured")
 
     async def event_stream() -> AsyncGenerator[str, None]:
         try:
-            yield _sse({"status": "generating", "message": "Gemini 2.5 Flash로 인포그래픽 생성 중..."})
+            key_info = f"Google({_blind_key(api_key)})" if api_key else ""
+            if qwen_key_info:
+                key_info += (", " if key_info else "") + f"Qwen({_blind_key(qwen_key_info)})"
+            yield _sse({"status": "generating", "message": f"인포그래픽 생성 중... API: {key_info}"})
             loop = asyncio.get_event_loop()
 
-            def _gen():
-                from google import genai
-                from google.genai import types as genai_types
-
-                client = genai.Client(api_key=api_key)
-                response = client.models.generate_content(
-                    model="gemini-2.5-flash-image",
-                    contents=prompt,
-                    config=genai_types.GenerateContentConfig(
-                        response_modalities=["IMAGE", "TEXT"],
-                    ),
-                )
-                for part in response.candidates[0].content.parts:
-                    if part.inline_data is not None:
-                        return part.inline_data.data
-                return None
-
             t0 = time.time()
-            image_bytes = await loop.run_in_executor(None, _gen)
+            image_bytes, used_model = await loop.run_in_executor(
+                None, lambda: _generate_gemini_image(prompt, api_key) if api_key else _generate_qwen_image(prompt, qwen_key_info)
+            )
             elapsed = round(time.time() - t0, 2)
 
             if not image_bytes:
@@ -1097,13 +1193,14 @@ async def generate_infographic(req: dict = fastapi.Body(...)):
             with open(fpath, "wb") as f:
                 f.write(image_bytes)
 
-            logger.info("Generated infographic '%s' in %.1fs (%d bytes)", fname, elapsed, len(image_bytes))
+            logger.info("Generated infographic '%s' with %s in %.1fs (%d bytes)", fname, used_model, elapsed, len(image_bytes))
             yield _sse({
                 "status": "complete",
                 "image_url": f"/api/infographics/{fname}",
                 "filename": fname,
                 "elapsed": elapsed,
                 "size": len(image_bytes),
+                "model": used_model,
             })
         except Exception as exc:
             logger.error("Infographic generation failed: %s", exc, exc_info=True)
@@ -1151,6 +1248,388 @@ async def api_get_poem(filename: str):
     else:
         content = raw.decode("utf-8", errors="replace")
     return {"filename": filename, "content": content}
+
+
+# ---------------------------------------------------------------------------
+# Poem Shorts (시 숏폼)
+# ---------------------------------------------------------------------------
+
+from app.video_service import compose_poem_video, VIDEOS_DIR
+os.makedirs(VIDEOS_DIR, exist_ok=True)
+
+POEM_IMAGE_SYSTEM_PROMPT = (
+    "You are a visual art director. Given a Korean poem, create a detailed "
+    "image generation prompt in English for an AI image generator. "
+    "The image will be used as a background for a poetry short-form video (9:16 portrait). "
+    "Focus on:\n"
+    "- The poem's dominant mood and atmosphere\n"
+    "- Key visual imagery from the poem\n"
+    "- A painterly, artistic style suitable for poetry\n"
+    "- Dark or muted tones that allow white text overlay to be readable\n"
+    "- No text or letters in the image itself\n"
+    "Output ONLY the image prompt, nothing else. Keep it under 200 words."
+)
+
+POEM_VIDEO_SYSTEM_PROMPT = (
+    "You are a short-form video director specializing in poetry videos. "
+    "Given a Korean poem and its background image description, describe how to compose "
+    "a vertical (9:16) short-form video. Include:\n"
+    "- Text animation style (scroll speed, direction)\n"
+    "- Title and author placement\n"
+    "- Font style and color recommendations\n"
+    "- Timing suggestions relative to the narration\n"
+    "- Overall mood and pacing\n"
+    "Output a concise creative brief in Korean, 5-8 lines."
+)
+
+DEFAULT_POEM_VOICE = "upload-68582e2a-성우"
+
+
+def _parse_poem(poem_text: str) -> dict:
+    lines = [l for l in poem_text.strip().split("\n") if l.strip()]
+    title = lines[0].strip() if len(lines) > 0 else "무제"
+    author = lines[1].strip() if len(lines) > 1 else ""
+    body = "\n".join(lines[2:]).strip() if len(lines) > 2 else "\n".join(lines).strip()
+    return {"title": title, "author": author, "body": body}
+
+
+def _update_poem_summary(project_id: str, step: str, data: dict):
+    import json as _json
+    proj = get_project(project_id)
+    if not proj:
+        return
+    raw = proj.get("poem_gen_summary") or "{}"
+    try:
+        summary = _json.loads(raw)
+    except Exception:
+        summary = {}
+    summary[step] = data
+    update_project(project_id, poem_gen_summary=_json.dumps(summary, ensure_ascii=False))
+
+
+@app.post("/api/poem-shorts/generate-audio")
+async def poem_shorts_generate_audio(req: dict = fastapi.Body(...)):
+    poem_text = req.get("poem_text", "").strip()
+    project_id = req.get("project_id", "")
+    voice_id = req.get("voice_id", DEFAULT_POEM_VOICE)
+    if not poem_text:
+        raise HTTPException(status_code=400, detail="poem_text is required")
+
+    async def event_stream() -> AsyncGenerator[str, None]:
+        try:
+            if not tts_service.is_loaded:
+                yield _sse({"status": "error", "message": "TTS model is not loaded yet"})
+                return
+            try:
+                tts_service.resolve_voice(voice_id)
+            except FileNotFoundError:
+                yield _sse({"status": "error", "message": f"Voice '{voice_id}' not found"})
+                return
+
+            parsed = _parse_poem(poem_text)
+            yield _sse({"status": "generating", "message": "Qwen3-TTS로 시 낭독 생성 중..."})
+
+            custom_fn = f"poem_{uuid.uuid4().hex[:8]}"
+
+            progress_q: queue.Queue = queue.Queue()
+            def on_progress(idx, total, preview):
+                progress_q.put((idx, total, preview))
+
+            loop = asyncio.get_event_loop()
+            gen_future = loop.run_in_executor(
+                None,
+                lambda: tts_service.generate(
+                    text=poem_text, voice_id=voice_id, language="Korean",
+                    output_name=None, voice_name=None,
+                    on_progress=on_progress, postprocess=True,
+                    custom_filename=custom_fn, poem_mode=True,
+                ),
+            )
+            elapsed = 0
+            while not gen_future.done():
+                try:
+                    await asyncio.wait_for(asyncio.shield(gen_future), timeout=15)
+                except asyncio.TimeoutError:
+                    elapsed += 15
+                    while not progress_q.empty():
+                        idx, total, preview = progress_q.get_nowait()
+                        yield _sse({"status": "generating", "message": f"청크 {idx}/{total}: {preview}..."})
+                    yield _sse({"status": "generating", "message": f"음성 생성 중... ({elapsed}s)"})
+            result = gen_future.result()
+            out_fname = result["output_filename"]
+
+            out_path = os.path.join(OUTPUTS_DIR, out_fname)
+            fsize = os.path.getsize(out_path) if os.path.isfile(out_path) else 0
+            gen_time = result.get("generation_time", 0)
+            audio_dur = result.get("duration", 0)
+
+            if project_id:
+                add_project_audio(project_id, out_fname, out_fname, fsize, "output")
+                update_project(project_id,
+                               poem_audio_filename=out_fname,
+                               poem_audio_duration=audio_dur,
+                               poem_text=poem_text)
+                _update_poem_summary(project_id, "audio", {
+                    "model": "Qwen3-TTS-1.7B (Local GPU)",
+                    "voice": voice_id,
+                    "elapsed": gen_time,
+                    "size": fsize,
+                    "duration": audio_dur,
+                })
+
+            yield _sse({
+                "status": "complete",
+                "audio_url": f"/api/outputs/{out_fname}",
+                "duration": audio_dur,
+                "generation_time": gen_time,
+            })
+        except Exception as exc:
+            logger.error("Poem audio generation failed: %s", exc, exc_info=True)
+            yield _sse({"status": "error", "message": str(exc)})
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"})
+
+
+@app.post("/api/poem-shorts/generate-image-prompt")
+async def poem_shorts_generate_image_prompt(req: dict = fastapi.Body(...)):
+    poem_text = req.get("poem_text", "").strip()
+    model = req.get("model", "claude-sonnet-4-6")
+    project_id = req.get("project_id", "")
+    if not poem_text:
+        raise HTTPException(status_code=400, detail="poem_text is required")
+
+    async def event_stream() -> AsyncGenerator[str, None]:
+        try:
+            yield _sse({"status": "generating", "message": "이미지 프롬프트 생성 중..."})
+            loop = asyncio.get_event_loop()
+            t0 = time.time()
+            result = await loop.run_in_executor(
+                None, lambda: _call_llm(model, POEM_IMAGE_SYSTEM_PROMPT, poem_text, 0.7)
+            )
+            elapsed = round(time.time() - t0, 2)
+            prompt = result["text"].strip()
+
+            api_key_used = os.environ.get("ANTHROPIC_API_KEY", "") if "claude" in model else os.environ.get("GROQ_API_KEY", "")
+            if project_id:
+                update_project(project_id, poem_image_prompt=prompt)
+                _update_poem_summary(project_id, "image_prompt", {
+                    "model": model,
+                    "api_key": _blind_key(api_key_used),
+                    "elapsed": elapsed,
+                    "input_tokens": result["input_tokens"],
+                    "output_tokens": result["output_tokens"],
+                })
+
+            yield _sse({
+                "status": "complete", "prompt": prompt,
+                "input_tokens": result["input_tokens"],
+                "output_tokens": result["output_tokens"],
+                "elapsed": elapsed,
+            })
+        except Exception as exc:
+            logger.error("Poem image prompt generation failed: %s", exc, exc_info=True)
+            yield _sse({"status": "error", "message": str(exc)})
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"})
+
+
+@app.post("/api/poem-shorts/generate-image")
+async def poem_shorts_generate_image(req: dict = fastapi.Body(...)):
+    prompt = req.get("prompt", "").strip()
+    project_id = req.get("project_id", "")
+    if not prompt:
+        raise HTTPException(status_code=400, detail="prompt is required")
+
+    google_key = os.environ.get("GOOGLE_API_KEY", "")
+    qwen_key = os.environ.get("QWEN_API_KEY", "")
+    if not google_key and not qwen_key:
+        raise HTTPException(status_code=500, detail="No image generation API key configured")
+
+    async def event_stream() -> AsyncGenerator[str, None]:
+        try:
+            key_info = f"Google({_blind_key(google_key)})" if google_key else ""
+            if qwen_key:
+                key_info += (", " if key_info else "") + f"Qwen({_blind_key(qwen_key)})"
+            yield _sse({"status": "generating", "message": f"배경 이미지 생성 중... API: {key_info}"})
+            loop = asyncio.get_event_loop()
+
+            t0 = time.time()
+            image_bytes, used_model = await loop.run_in_executor(
+                None, lambda: _generate_gemini_image(prompt, google_key) if google_key else _generate_qwen_image(prompt, qwen_key)
+            )
+            elapsed = round(time.time() - t0, 2)
+
+            if not image_bytes:
+                yield _sse({"status": "error", "message": "이미지 생성에 실패했습니다."})
+                return
+
+            fname = f"poem_bg_{uuid.uuid4().hex[:8]}.png"
+            fpath = os.path.join(INFOGRAPHICS_DIR, fname)
+
+            with open(fpath, "wb") as f:
+                f.write(image_bytes)
+
+            used_key = google_key if "gemini" in used_model.lower() else qwen_key
+            if project_id:
+                update_project(project_id, poem_image_filename=fname)
+                _update_poem_summary(project_id, "image", {
+                    "model": used_model,
+                    "api_key": _blind_key(used_key),
+                    "elapsed": elapsed,
+                    "size": len(image_bytes),
+                })
+
+            logger.info("Poem background image '%s' with %s in %.1fs (%d bytes)", fname, used_model, elapsed, len(image_bytes))
+            yield _sse({
+                "status": "complete",
+                "image_url": f"/api/infographics/{fname}",
+                "filename": fname,
+                "elapsed": elapsed,
+                "size": len(image_bytes),
+                "model": used_model,
+            })
+        except Exception as exc:
+            logger.error("Poem image generation failed: %s", exc, exc_info=True)
+            yield _sse({"status": "error", "message": str(exc)})
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"})
+
+
+@app.post("/api/poem-shorts/generate-video-prompt")
+async def poem_shorts_generate_video_prompt(req: dict = fastapi.Body(...)):
+    poem_text = req.get("poem_text", "").strip()
+    image_prompt = req.get("image_prompt", "")
+    model = req.get("model", "claude-sonnet-4-6")
+    project_id = req.get("project_id", "")
+    if not poem_text:
+        raise HTTPException(status_code=400, detail="poem_text is required")
+
+    user_text = poem_text
+    if image_prompt:
+        user_text += f"\n\n[배경 이미지 설명]\n{image_prompt}"
+
+    async def event_stream() -> AsyncGenerator[str, None]:
+        try:
+            yield _sse({"status": "generating", "message": "영상 프롬프트 생성 중..."})
+            loop = asyncio.get_event_loop()
+            t0 = time.time()
+            result = await loop.run_in_executor(
+                None, lambda: _call_llm(model, POEM_VIDEO_SYSTEM_PROMPT, user_text, 0.7)
+            )
+            elapsed = round(time.time() - t0, 2)
+            prompt = result["text"].strip()
+
+            api_key_used = os.environ.get("ANTHROPIC_API_KEY", "") if "claude" in model else os.environ.get("GROQ_API_KEY", "")
+            if project_id:
+                update_project(project_id, poem_video_prompt=prompt)
+                _update_poem_summary(project_id, "video_prompt", {
+                    "model": model,
+                    "api_key": _blind_key(api_key_used),
+                    "elapsed": elapsed,
+                    "input_tokens": result["input_tokens"],
+                    "output_tokens": result["output_tokens"],
+                })
+
+            yield _sse({
+                "status": "complete", "prompt": prompt,
+                "input_tokens": result["input_tokens"],
+                "output_tokens": result["output_tokens"],
+                "elapsed": elapsed,
+            })
+        except Exception as exc:
+            logger.error("Poem video prompt generation failed: %s", exc, exc_info=True)
+            yield _sse({"status": "error", "message": str(exc)})
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"})
+
+
+@app.post("/api/poem-shorts/generate-video")
+async def poem_shorts_generate_video(req: dict = fastapi.Body(...)):
+    project_id = req.get("project_id", "")
+    if not project_id:
+        raise HTTPException(status_code=400, detail="project_id is required")
+
+    proj = get_project(project_id)
+    if not proj:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    poem_text = proj.get("poem_text", "")
+    audio_fname = proj.get("poem_audio_filename", "")
+    image_fname = proj.get("poem_image_filename", "")
+
+    if not poem_text:
+        raise HTTPException(status_code=400, detail="No poem text found. Generate audio first.")
+    if not audio_fname:
+        raise HTTPException(status_code=400, detail="No poem audio found. Generate audio first.")
+    if not image_fname:
+        raise HTTPException(status_code=400, detail="No background image found. Generate image first.")
+
+    audio_path = os.path.join(OUTPUTS_DIR, audio_fname)
+    image_path = os.path.join(INFOGRAPHICS_DIR, image_fname)
+
+    if not os.path.isfile(audio_path):
+        raise HTTPException(status_code=404, detail=f"Audio file not found: {audio_fname}")
+    if not os.path.isfile(image_path):
+        raise HTTPException(status_code=404, detail=f"Image file not found: {image_fname}")
+
+    parsed = _parse_poem(poem_text)
+    proj_name = re.sub(r'[\\/:*?"<>|]', '', proj.get("name", "")).strip()
+    proj_name = re.sub(r'\s+', '_', proj_name) or "poem"
+
+    async def event_stream() -> AsyncGenerator[str, None]:
+        try:
+            yield _sse({"status": "generating", "message": "영상 합성 중 (ffmpeg)..."})
+            loop = asyncio.get_event_loop()
+
+            result = await loop.run_in_executor(
+                None,
+                lambda: compose_poem_video(
+                    image_path=image_path,
+                    audio_path=audio_path,
+                    poem_title=parsed["title"],
+                    poem_author=parsed["author"],
+                    poem_body=parsed["body"],
+                    output_name=proj_name,
+                ),
+            )
+
+            update_project(project_id,
+                           poem_video_filename=result["output_filename"],
+                           poem_gen_elapsed=result["elapsed"])
+            _update_poem_summary(project_id, "video", {
+                "model": "ffmpeg (libx264 + ASS subtitles)",
+                "elapsed": result["elapsed"],
+                "size": result["file_size"],
+                "duration": result["duration"],
+            })
+
+            yield _sse({
+                "status": "complete",
+                "video_url": f"/api/videos/{result['output_filename']}",
+                "duration": result["duration"],
+                "elapsed": result["elapsed"],
+                "file_size": result["file_size"],
+            })
+        except Exception as exc:
+            logger.error("Poem video generation failed: %s", exc, exc_info=True)
+            yield _sse({"status": "error", "message": str(exc)})
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"})
+
+
+@app.get("/api/videos/{filename}")
+async def api_get_video(filename: str):
+    if "/" in filename or "\\" in filename or ".." in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    path = os.path.join(VIDEOS_DIR, filename)
+    if not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail="File not found")
+    return FileResponse(path, filename=filename, media_type="video/mp4")
 
 
 def _sse(data: dict) -> str:
