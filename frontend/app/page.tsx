@@ -11,8 +11,10 @@ interface GenerationStatus { status: "idle" | "loading" | "generating" | "comple
 interface TranscriptSegment { speaker: number; start: number; end: number; text: string; }
 interface TranscriptResult { segments: TranscriptSegment[]; full_text: string; duration: number; processing_time: number; }
 
+interface AuthUser { username: string; role: string; token: string; }
+
 interface Project {
-  id: string; name: string; created_at: string;
+  id: string; name: string; created_at: string; owner: string | null;
   source_audio_filename: string | null; source_audio_original_name: string | null; source_audio_size: number;
   transcript_json: string | null; transcript_text: string | null; num_speakers: number;
   llm_model: string | null; edited_transcript: string | null; rewritten_text: string | null;
@@ -294,6 +296,61 @@ async function readSSE(res: Response, onEvent: (evt: Record<string, unknown>) =>
 /* ------------------------------------------------------------------ */
 
 export default function Home() {
+  /* ---- Auth state ---- */
+  const [authUser, setAuthUser] = useState<AuthUser | null>(null);
+  const [showAuthModal, setShowAuthModal] = useState(false);
+  const [authMode, setAuthMode] = useState<"signin" | "signup">("signin");
+  const [authUsername, setAuthUsername] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authError, setAuthError] = useState("");
+  const [authLoading, setAuthLoading] = useState(false);
+
+  useEffect(() => {
+    const saved = localStorage.getItem("voicestudio_auth");
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved) as AuthUser;
+        setAuthUser(parsed);
+      } catch { /* ignore */ }
+    }
+  }, []);
+
+  const authHeaders = (): Record<string, string> => {
+    if (!authUser?.token) return { "Content-Type": "application/json" };
+    return { "Content-Type": "application/json", Authorization: `Bearer ${authUser.token}` };
+  };
+
+  const handleAuth = async () => {
+    if (!authUsername.trim() || !authPassword) return;
+    setAuthLoading(true);
+    setAuthError("");
+    try {
+      const endpoint = authMode === "signup" ? "/api/auth/signup" : "/api/auth/signin";
+      const res = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: authUsername.trim(), password: authPassword }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: "Error" }));
+        setAuthError(err.detail || "Failed");
+        return;
+      }
+      const data: AuthUser = await res.json();
+      setAuthUser(data);
+      localStorage.setItem("voicestudio_auth", JSON.stringify(data));
+      setShowAuthModal(false);
+      setAuthUsername("");
+      setAuthPassword("");
+    } catch { setAuthError("Network error"); }
+    finally { setAuthLoading(false); }
+  };
+
+  const handleSignout = () => {
+    setAuthUser(null);
+    localStorage.removeItem("voicestudio_auth");
+  };
+
   /* ---- View state ---- */
   const [view, setView] = useState<"landing" | "studio">("landing");
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
@@ -516,17 +573,23 @@ export default function Home() {
   /* ================================================================ */
 
   const fetchProjects = useCallback(async () => {
-    try { const res = await fetch("/api/projects"); if (res.ok) setProjects(await res.json()); } catch { /* silent */ }
-  }, []);
+    try {
+      const headers: Record<string, string> = {};
+      if (authUser?.token) headers["Authorization"] = `Bearer ${authUser.token}`;
+      const res = await fetch("/api/projects", { headers });
+      if (res.ok) setProjects(await res.json());
+    } catch { /* silent */ }
+  }, [authUser]);
 
   useEffect(() => { fetchProjects(); }, [fetchProjects]);
   useEffect(() => { debugRef.current?.scrollTo(0, debugRef.current.scrollHeight); }, [debugLogs]);
 
   const createProject = async () => {
     if (!newProjectName.trim()) return;
+    if (!authUser) { setShowAuthModal(true); return; }
     try {
       const res = await fetch("/api/projects", {
-        method: "POST", headers: { "Content-Type": "application/json" },
+        method: "POST", headers: authHeaders(),
         body: JSON.stringify({ name: newProjectName.trim() }),
       });
       if (!res.ok) return;
@@ -2365,6 +2428,26 @@ export default function Home() {
   if (view === "landing") {
     return (
       <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
+        {/* Auth button - top right */}
+        <div className="flex justify-end mb-2">
+          {authUser ? (
+            <div className="flex items-center gap-3">
+              <span className="text-sm text-[#a09bb5]">
+                <svg className="inline w-4 h-4 mr-1 -mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
+                <span className="font-medium text-white">{authUser.username}</span>
+                {authUser.role === "admin" && <span className="ml-1 text-xs text-accent-400">(admin)</span>}
+              </span>
+              <button onClick={handleSignout} className="text-xs text-[#6b6580] hover:text-red-400 transition-colors">로그아웃</button>
+            </div>
+          ) : (
+            <button onClick={() => { setAuthMode("signin"); setAuthError(""); setShowAuthModal(true); }}
+              className="flex items-center gap-1.5 text-sm text-[#a09bb5] hover:text-white transition-colors">
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
+              로그인
+            </button>
+          )}
+        </div>
+
         <header className="mb-10 text-center">
           <h1 className="text-4xl font-bold tracking-tight sm:text-5xl">
             <span className="bg-gradient-to-r from-accent-400 to-purple-400 bg-clip-text text-transparent">
@@ -2377,23 +2460,35 @@ export default function Home() {
 
         <div className="mb-8 flex items-center justify-between">
           <h2 className="text-xl font-semibold text-[#e8e4f0]">프로젝트</h2>
-          <button className="btn-primary text-sm" onClick={() => { setNewProjectName(""); setShowNewModal(true); }}>
-            <PlusIcon /> 새 프로젝트
-          </button>
+          {authUser ? (
+            <button className="btn-primary text-sm" onClick={() => { setNewProjectName(""); setShowNewModal(true); }}>
+              <PlusIcon /> 새 프로젝트
+            </button>
+          ) : (
+            <button className="btn-primary text-sm" onClick={() => { setAuthMode("signin"); setAuthError(""); setShowAuthModal(true); }}>
+              <PlusIcon /> 로그인하여 프로젝트 만들기
+            </button>
+          )}
         </div>
 
         {projects.length === 0 ? (
           <div className="card text-center py-16">
             <BookIcon />
             <p className="mt-4 text-[#a09bb5]">아직 프로젝트가 없습니다</p>
-            <p className="mt-1 text-sm text-[#6b6580]">새 프로젝트를 만들어 회고록 작업을 시작하세요</p>
-            <button className="btn-primary mt-6" onClick={() => { setNewProjectName(""); setShowNewModal(true); }}>
-              <PlusIcon /> 새 프로젝트 만들기
-            </button>
+            <p className="mt-1 text-sm text-[#6b6580]">{authUser ? "새 프로젝트를 만들어 회고록 작업을 시작하세요" : "로그인하여 프로젝트를 만드세요"}</p>
+            {authUser ? (
+              <button className="btn-primary mt-6" onClick={() => { setNewProjectName(""); setShowNewModal(true); }}>
+                <PlusIcon /> 새 프로젝트 만들기
+              </button>
+            ) : (
+              <button className="btn-primary mt-6" onClick={() => { setAuthMode("signin"); setAuthError(""); setShowAuthModal(true); }}>
+                로그인
+              </button>
+            )}
           </div>
         ) : (
           <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-            {projects.filter((p) => !p.name.includes('자서전')).map((p) => (
+            {projects.map((p) => (
               <div key={p.id} className="flex flex-col rounded-2xl border border-[#3d3556] bg-[#252040] p-6 shadow-xl hover:border-[#5b4f8a] transition-colors">
                 {/* Header */}
                 <div className="mb-4 flex items-start justify-between gap-3">
@@ -2592,6 +2687,41 @@ export default function Home() {
                 <button className="btn-secondary flex-1" onClick={() => setShowNewModal(false)}>취소</button>
                 <button className="btn-primary flex-1" disabled={!newProjectName.trim()} onClick={createProject}>만들기</button>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* Auth Modal */}
+        {showAuthModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setShowAuthModal(false)}>
+            <div className="card mx-4 w-full max-w-sm space-y-4" onClick={(e) => e.stopPropagation()}>
+              <h2 className="text-lg font-semibold text-center">{authMode === "signin" ? "로그인" : "회원가입"}</h2>
+              {authError && <p className="text-sm text-red-400 text-center">{authError}</p>}
+              <div>
+                <label className="label">사용자 이름</label>
+                <input type="text" className="input-field" placeholder="username"
+                  value={authUsername} onChange={(e) => setAuthUsername(e.target.value)}
+                  autoFocus onKeyDown={(e) => e.key === "Enter" && handleAuth()} />
+              </div>
+              <div>
+                <label className="label">비밀번호</label>
+                <input type="password" className="input-field" placeholder="password"
+                  value={authPassword} onChange={(e) => setAuthPassword(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && handleAuth()} />
+              </div>
+              <div className="flex gap-3 pt-2">
+                <button className="btn-secondary flex-1" onClick={() => setShowAuthModal(false)}>취소</button>
+                <button className="btn-primary flex-1" disabled={authLoading || !authUsername.trim() || !authPassword} onClick={handleAuth}>
+                  {authLoading ? "..." : authMode === "signin" ? "로그인" : "가입"}
+                </button>
+              </div>
+              <p className="text-center text-xs text-[#6b6580]">
+                {authMode === "signin" ? (
+                  <>계정이 없으신가요? <button className="text-accent-400 hover:underline" onClick={() => { setAuthMode("signup"); setAuthError(""); }}>회원가입</button></>
+                ) : (
+                  <>이미 계정이 있으신가요? <button className="text-accent-400 hover:underline" onClick={() => { setAuthMode("signin"); setAuthError(""); }}>로그인</button></>
+                )}
+              </p>
             </div>
           </div>
         )}

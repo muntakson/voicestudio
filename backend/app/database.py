@@ -137,6 +137,7 @@ def _migrate(db: sqlite3.Connection):
         ("tts_elapsed", "REAL DEFAULT 0"),
         ("tts_cost", "REAL DEFAULT 0"),
         ("total_cost", "REAL DEFAULT 0"),
+        ("owner", "TEXT DEFAULT 'admin'"),
         ("poem_text", "TEXT"),
         ("poem_audio_filename", "TEXT"),
         ("poem_audio_duration", "REAL DEFAULT 0"),
@@ -164,11 +165,11 @@ def get_project(project_id: str) -> dict | None:
     return dict(row) if row else None
 
 
-def create_project(project_id: str, name: str, created_at: str) -> dict:
+def create_project(project_id: str, name: str, created_at: str, owner: str = "admin") -> dict:
     db = get_db()
     db.execute(
-        "INSERT INTO projects (id, name, created_at) VALUES (?, ?, ?)",
-        (project_id, name, created_at),
+        "INSERT INTO projects (id, name, created_at, owner) VALUES (?, ?, ?, ?)",
+        (project_id, name, created_at, owner),
     )
     db.commit()
     return get_project(project_id)
@@ -184,7 +185,7 @@ _ALLOWED_FIELDS = {
     "fix_typos_model", "fix_typos_input_tokens", "fix_typos_output_tokens", "fix_typos_elapsed", "fix_typos_cost",
     "rewrite_model", "rewrite_input_tokens", "rewrite_output_tokens", "rewrite_elapsed", "rewrite_cost",
     "tts_text", "tts_engine", "tts_model", "tts_text_chars", "tts_elapsed", "tts_cost",
-    "total_cost",
+    "total_cost", "owner",
     "poem_text", "poem_audio_filename", "poem_audio_duration",
     "poem_image_prompt", "poem_image_filename",
     "poem_video_prompt", "poem_video_filename", "poem_gen_elapsed",

@@ -33,6 +33,7 @@ from app.models import (
     AudioDownloadRequest, GenerateRequest, HealthResponse, ProjectCreate,
     ProjectUpdate, RewriteRequest, VoiceInfo, VoiceListResponse,
 )
+from app.auth import init_users, signup, signin, get_current_user, require_auth, assign_orphan_projects
 from app.elevenlabs_service import elevenlabs_service
 from app.tts_service import tts_service, OUTPUTS_DIR, UPLOADS_DIR, ALLOWED_AUDIO_EXTENSIONS
 
@@ -44,6 +45,8 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(na
 async def lifespan(app: FastAPI):
     logger.info("Starting Qwen3-TTS backend ...")
     init_db()
+    init_users()
+    assign_orphan_projects()
     logger.info("Database initialized.")
     tts_service.load_model()
     logger.info("Model ready. Accepting requests.")
@@ -64,6 +67,29 @@ app.add_middleware(
 os.makedirs(UPLOADS_DIR, exist_ok=True)
 os.makedirs(OUTPUTS_DIR, exist_ok=True)
 app.mount("/uploads", StaticFiles(directory=UPLOADS_DIR), name="uploads")
+
+
+# ---------------------------------------------------------------------------
+# Auth Routes
+# ---------------------------------------------------------------------------
+
+from pydantic import BaseModel as _BM
+
+class _AuthBody(_BM):
+    username: str
+    password: str
+
+@app.post("/api/auth/signup")
+async def api_signup(body: _AuthBody):
+    return signup(body.username.strip(), body.password)
+
+@app.post("/api/auth/signin")
+async def api_signin(body: _AuthBody):
+    return signin(body.username.strip(), body.password)
+
+@app.get("/api/auth/me")
+async def api_auth_me(user: dict = fastapi.Depends(require_auth)):
+    return {"username": user["username"], "role": user["role"]}
 
 
 # ---------------------------------------------------------------------------
@@ -317,16 +343,22 @@ async def transcribe_audio(
 # ---------------------------------------------------------------------------
 
 @app.get("/api/projects")
-async def api_list_projects():
-    return list_projects()
+async def api_list_projects(user: dict | None = fastapi.Depends(get_current_user)):
+    all_projects = list_projects()
+    if not user:
+        return all_projects
+    if user["role"] == "admin":
+        return all_projects
+    return [p for p in all_projects if p.get("owner") == user["username"]]
 
 
 @app.post("/api/projects")
-async def api_create_project(req: ProjectCreate):
+async def api_create_project(req: ProjectCreate, user: dict = fastapi.Depends(require_auth)):
     pid = str(uuid.uuid4())
     now = datetime.now().isoformat()
-    proj = create_project(pid, req.name.strip(), now)
-    logger.info("Created project '%s' (%s)", req.name, pid)
+    owner = user["username"]
+    proj = create_project(pid, req.name.strip(), now, owner=owner)
+    logger.info("Created project '%s' (%s) by %s", req.name, pid, owner)
     return proj
 
 
